@@ -18,7 +18,13 @@ class TrustProxies extends Middleware
 
     /**
      * The headers that should be used to detect proxies.
+     *
+     * Symfony 7 removed the HEADER_X_FORWARDED_ALL constant.
+     * Use the explicit bitmask of supported X-Forwarded headers instead.
      */
-    protected $headers = Request::HEADER_X_FORWARDED_ALL | Request::HEADER_X_FORWARDED_AWS_ELB;
+    protected $headers =
+        Request::HEADER_X_FORWARDED_FOR
+        | Request::HEADER_X_FORWARDED_HOST
+        | Request::HEADER_X_FORWARDED_PORT
+        | Request::HEADER_X_FORWARDED_PROTO;
 }
-
