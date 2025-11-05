@@ -1,0 +1,220 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Resources\IndicatorResource;
+use App\Models\Category;
+use App\Models\Criteria;
+use App\Models\Department;
+use App\Models\Formula;
+use App\Models\Indicator;
+use App\Models\Standard;
+use App\Models\User;
+use App\Models\Variable;
+use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+
+class IndicatorController extends Controller
+{
+    public function index()
+    {
+
+        $indicators = Indicator::with([
+            'category.standard',
+            'assignments.user',
+            'criterias',
+            // 'evidences',
+        ])
+            ->get()
+            // Database-agnostic ordering (SQLite-friendly):
+            // 1) prefix rank by first 3 chars (NCS,NCO,NCP => 1,2,3 else 4)
+            // 2) numeric part after first '-' if numeric; else 999999
+            ->sortBy(function ($i) {
+                $code = (string) ($i->code ?? '');
+                $prefix = substr($code, 0, 3);
+                $rank = match ($prefix) {
+                    'NCS' => 1,
+                    'NCO' => 2,
+                    'NCP' => 3,
+                    default => 4,
+                };
+                $num = 999999;
+                $dashPos = strpos($code, '-');
+                if ($dashPos !== false) {
+                    $after = substr($code, $dashPos + 1);
+                    if (preg_match('/^\d+$/', $after)) {
+                        $num = (int) $after;
+                    }
+                }
+                // Compose sortable key
+                return sprintf('%02d-%06d-%s', $rank, $num, $code);
+            })
+            ->values()
+            ->map(fn($i) => $this->serializeIndicatorForList($i));
+            
+        $years = Indicator::whereNotNull('year')
+            ->selectRaw('DISTINCT year')
+            ->orderBy('year', 'desc')
+            ->pluck('year');
+        // dd($indicators);
+
+        return view('indicator.app', compact('indicators' , 'years'));
+
+        // return response()->json(['indicators' => $indicators]);
+    }
+
+    public function create()
+    {
+        $data = $this->formSelections();
+        $data['criteriaOptions'] = [];
+
+        // ใช้สำหรับ multi-select + filter
+        $data['usersForAssign'] = User::select('id', 'name', 'department_id')
+            ->orderBy('name')
+            ->get()
+            ->map(fn($u) => [
+                'id' => $u->id,
+                'name' => $u->name,
+                'department_id' => $u->department_id,
+            ]);
+
+        return view('indicator.create', $data);
+    }
+
+    public function show($id)
+    {
+        $indicator = Indicator::with([
+            'category.standard',
+            'criterias',
+            'variables',
+            'formulas',
+            'checklistItems',
+            'assignments.user.department',
+            'evidences',
+        ])->findOrFail($id);
+
+        // Reuse the API shape for the view
+        $data = (new IndicatorResource($indicator))->toArray(request());
+
+        return view('indicator.detail', compact('data'));
+
+        // return response()->json($data);
+    }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            // Basic
+            'year' => 'required|integer|digits:4',
+            'name' => 'required|string|max:255',
+            'code' => 'required|string|max:100',
+            'max_score' => 'required|numeric|min:0',
+            'standard_id' => 'required|exists:standards,id',
+            'category_id' => 'required|exists:categories,id',
+            'type' => 'nullable|string',
+            'deadline' => 'required|date',
+
+            // Responsible
+            'department_ids' => 'nullable|array',
+            'department_ids.*' => 'exists:departments,id',
+
+            'user_ids' => 'required|array|min:1',
+            'user_ids.*' => 'exists:users,id',
+
+            // Rich text
+            'description' => 'nullable|string',
+            'condition' => 'nullable|string',
+            'comment' => 'nullable|string',
+            'annotation' => 'nullable|string',
+
+            // Criteria
+            'criteria' => 'nullable|array',
+            'criteria.*.id' => 'nullable|integer|exists:criterias,id',
+            'criteria.*.sequence' => 'required|integer',
+            'criteria.*.name' => 'required|string',
+            'criteria.*.description' => 'nullable|string',
+
+            // Multi-choice (count-based)
+            'multiCounts' => 'nullable|array',
+            'multiCounts.*.count' => 'required|integer|min:0',
+            'multiCounts.*.score' => 'required|numeric',
+
+            // Multi-choice (selected-based)
+            'multiSelected' => 'nullable|array',
+            'multiSelected.*.sequence' => 'required|integer',
+            'multiSelected.*.required_items' => 'nullable|array',
+            'multiSelected.*.required_items.*' => 'integer',
+            'multiSelected.*.score' => 'required|numeric',
+
+            // Custom scoring
+            'scoring.variables' => 'nullable|array',
+            'scoring.variables.*.variable_name' => 'required|string|max:100',
+            'scoring.variables.*.label_name' => 'required|string|max:100',
+            'scoring.variables.*.type' => 'required|in:defined,input,output',
+            'scoring.variables.*.value' => 'nullable|numeric',
+            'scoring.condition' => 'nullable|string',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $indicator = Indicator::create([
+                'year' => $validated['year'],
+                'name' => $validated['name'],
+                'code' => $validated['code'],
+                'max_score' => $validated['max_score'],
+                'score_acc' => 0,
+                'categorie_id' => $validated['category_id'], // คอลัมน์สะกดตามนี้
+                'type' => $validated['type'] ?? null,
+                'deadline' => $validated['deadline'],
+                'status' => 0,
+                'description' => $validated['description'] ?? null,
+                'condition' => $validated['condition'] ?? null,
+                'comment' => $validated['comment'] ?? null,
+                'annotation' => $validated['annotation'] ?? null,
+            ]);
+
+            // สร้าง assignments หลายรายการ
+            $indicator->assignments()->createMany(
+                collect($validated['user_ids'])->unique()->values()->map(fn($uid) => ['collector' => $uid])->all()
+            );
+
+            $criteriaCount = $this->syncCriterias($indicator, $validated['criteria'] ?? []);
+            $this->syncVariablesAndFormula($indicator, $validated['scoring'] ?? []);
+            $this->syncChecklistFromSelected($indicator, $validated['multiSelected'] ?? []);
+            // Generate checklist items from multiCounts via service
+            app(\App\Services\ChecklistGenerator::class)
+                ->syncFromCounts($indicator, $validated['multiCounts'] ?? [], $criteriaCount);
+
+            DB::commit();
+
+            return redirect()
+                ->route('indicator.show', $indicator->id)
+                ->with('success', 'ตัวบ่งชี้ถูกสร้างเรียบร้อยแล้ว');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return back()
+                ->withErrors(['error' => 'เกิดข้อผิดพลาดในการบันทึก: ' . $e->getMessage()])
+                ->withInput();
+        }
+    }
+
+    public function edit($id)
+    {
+        $data = $this->formSelections();
+        // $data['criteriaOptions'] = [];
+
+        // ใช้สำหรับ multi-select + filter
+        $data['usersForAssign'] = User::select('id', 'name', 'department_id')
+            ->orderBy('name')
+            ->get()
+            ->map(fn($u) => [
+                'id' => $u->id,
+                'name' => $u->name,
+                'department_id' => $u->department_id,
+            ]);
+
+        $indicator = Indicator::with([
+            'category.standard',

@@ -1,0 +1,200 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use App\Models\Indicator;
+use App\Models\Variable;
+use App\Models\Criteria;
+use App\Models\Evidence;
+use Illuminate\Database\Eloquent\Casts\Json;
+use Laravel\Pail\ValueObjects\Origin\Console;
+
+class DashboardKpiAdminController extends Controller
+{
+
+    public function show(Request $request,$id)
+    {
+        $indicator = Indicator::with([
+            'category.standard',
+            'assignments.collectorUser.department',
+            'criterias' => function($query) {
+                $query->orderBy('sequence', 'asc');
+            },
+            'criterias.evidences.user.department',
+            'variables',
+            'formulas.variables',
+            'checklistItems',
+        ])->findOrFail($id);
+        // dd($indicator);
+        return view('kpi_dashboard_assigned.vrf_show', compact('indicator'));
+    }
+
+    public function saveVariables(Request $request, $id)
+    {
+        $indicator = Indicator::findOrFail($id);
+
+        // variables
+        if ($request->has('variables')) {
+            foreach ($request->variables as $varId => $value) {
+                Variable::updateOrCreate(
+                    ['id' => $varId, 'indicator_id' => $indicator->id],
+                    ['value' => $value]
+                );
+            }
+        }
+
+        // criterias
+        if ($request->has('criterias')) {
+            foreach ($request->criterias as $criteriaId => $criteriaData) {
+                if (isset($criteriaData['status'])) {
+                    Criteria::where('id', $criteriaId)->update(['status' => $criteriaData['status']]);
+                }
+            }
+        }
+
+        // evidences
+        // if ($request->has('evidences')) {
+        //     foreach ($request->evidences as $evidenceId => $evidenceData) {
+        //         if (isset($evidenceData['status'])) {
+        //             Evidence::where('id', $evidenceId)->update([
+        //                 'status' => $evidenceData['status'] === 'true'
+        //             ]);
+        //         }
+        //     }
+        // }
+
+        if ($request->has('status')) {
+            $indicator->status = $request->status;
+        } else {
+            $indicator->status = 1; // Default value
+        }
+
+        $indicator->save();
+
+        if ($indicator->status == 2 || $request->status == 2) {
+            $this->calculateScore($indicator);
+        }
+
+        // ✅ ส่ง JSON กลับไป
+        return redirect()->route('dashboardkpi.admin.show', $indicator->id)
+            ->with('success', 'บันทึกข้อมูลเรียบร้อยแล้ว');
+
+        // return response()->json($request->all());
+    }
+
+    private function calculateScore($indicator)
+    {
+        $scoreAcc = 0;
+
+        // Check if indicator has variables (formula-based calculation)
+        if ($indicator->variables->isNotEmpty()) {
+            $scoreAcc = $this->calculateFormulaScore($indicator);
+        }
+        // Check if indicator has checklist items (checklist-based calculation)
+        elseif ($indicator->checklistItems->isNotEmpty()) {
+            $scoreAcc = $this->calculateChecklistScore($indicator);
+        }
+
+        // Update the indicator's score_acc
+        $indicator->score_acc = $scoreAcc;
+        $indicator->save();
+
+        return $scoreAcc;
+    }
+
+    private function calculateChecklistScore($indicator)
+    {
+        // Get all criteria with status = 1 (passed criteria)
+        $passedCriteria = $indicator->criterias->where('status', 1);
+
+        // Create array of passed criteria sequences (sorted and normalized to int for comparison)
+        $passedCriteriaSequences = $passedCriteria
+            ->pluck('sequence')
+            ->map(fn($v) => (int) $v)
+            ->sort()
+            ->values()
+            ->toArray();
+
+        Log::info("Passed criteria sequences for indicator {$indicator->id}: " . json_encode($passedCriteriaSequences));
+
+        // Check each checklist item for exact match
+        foreach ($indicator->checklistItems as $checklistItem) {
+            $requiredItems = $checklistItem->required_items ?? [];
+
+            // Normalize and sort required items for comparison
+            $sortedRequiredItems = collect($requiredItems)
+                ->map(fn($v) => (int) $v)
+                ->sort()
+                ->values()
+                ->toArray();
+
+            Log::info("Checking checklist item {$checklistItem->id}, required sequences: " . json_encode($sortedRequiredItems));
+            Log::info("Comparing with passed sequences: " . json_encode($passedCriteriaSequences));
+
+            // Check if the passed criteria sequences exactly match the required items
+            if ($passedCriteriaSequences === $sortedRequiredItems) {
+                $itemScore = $checklistItem->score ?? 0;
+
+                Log::info("Exact match found! Using score {$itemScore} from checklist item {$checklistItem->id}");
+
+                return $itemScore; // Return immediately when exact match is found
+            } else {
+                Log::info("No exact match for checklist item {$checklistItem->id}");
+            }
+        }
+
+        // If no exact match found, return 0
+        Log::info("No checklist item matched the passed criteria sequences for indicator {$indicator->id}");
+
+        return 0;
+    }
+
+    private function calculateFormulaScore($indicator)
+    {
+        // Refresh to ensure latest values
+        $indicator->refresh();
+
+        $formulas = $indicator->formulas;
+        $anyOutputUpdated = false;
+        $lastOutcome = 0.0;
+
+        foreach ($formulas as $formula) {
+            $raw = (string) ($formula->condition ?? '');
+
+            // 1) Find all tokens that look like variable names (letters, digits, underscore)
+            preg_match_all('/[A-Za-z_][A-Za-z0-9_]*/', $raw, $matches);
+            $tokens = array_unique($matches[0] ?? []);
+
+            // 2) Build a map of variable name => numeric value from indicator variables
+            $varMap = [];
+            foreach ($indicator->variables as $v) {
+                // Only allow known types to be injected
+                if (in_array($v->type, ['input', 'defined', 'output'])) {
+                    $varMap[$v->variable_name] = is_null($v->value) ? 0 : (float) $v->value;
+                }
+            }
+
+            // 3) Replace tokens that exist in varMap using word-boundary safe replacement
+            $condition = $raw;
+            foreach ($tokens as $name) {
+                if (array_key_exists($name, $varMap)) {
+                    $condition = preg_replace('/\b' . preg_quote($name, '/') . '\b/', (string) $varMap[$name], $condition);
+                }
+            }
+
+            try {
+                Log::info("Evaluating formula for indicator {$indicator->id}: {$condition}");
+                $outcome = (float) $this->evaluateFormula($condition);
+                if (!is_finite($outcome)) {
+                    throw new \RuntimeException('Non-finite outcome (NaN/INF)');
+                }
+                $lastOutcome = $outcome;
+
+                // 4) If this formula has an output variable, store the outcome there
+                $outputVariable = $formula->variables->firstWhere('type', 'output');
+                if ($outputVariable) {
+                    $outputVariable->value = $outcome;
+                    $outputVariable->save();

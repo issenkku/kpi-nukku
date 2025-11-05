@@ -1,0 +1,144 @@
+<mxfile host="app.diagrams.net" modified="2025-10-28T00:00:00.000Z" agent="Codex CLI" version="22.0.3" type="device">
+  <diagram id="data-dict" name="Data Dictionary">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3300" pageHeight="2339" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- standards -->
+        <mxCell id="std" value="&lt;b&gt;standards&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• name" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="220" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- categories -->
+        <mxCell id="cat" value="&lt;b&gt;categories&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• name&lt;br/&gt;• max_score&lt;br/&gt;• standard_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="200" width="240" height="150" as="geometry"/>
+        </mxCell>
+
+        <!-- indicators -->
+        <mxCell id="ind" value="&lt;b&gt;indicators&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• name, year, code, type&lt;br/&gt;• description, condition, annotation&lt;br/&gt;• deadline, status, comment&lt;br/&gt;• score_acc, max_score&lt;br/&gt;• categorie_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="300" y="200" width="280" height="210" as="geometry"/>
+        </mxCell>
+
+        <!-- criterias -->
+        <mxCell id="cri" value="&lt;b&gt;criterias&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• name, description&lt;br/&gt;• sequence, status&lt;br/&gt;• report&lt;br/&gt;• indicator_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="620" y="200" width="260" height="170" as="geometry"/>
+        </mxCell>
+
+        <!-- evidence -->
+        <mxCell id="ev" value="&lt;b&gt;evidence&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• name, path, type&lt;br/&gt;• detail, status&lt;br/&gt;• criteria_id (FK)&lt;br/&gt;• user_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="920" y="200" width="260" height="170" as="geometry"/>
+        </mxCell>
+
+        <!-- variables -->
+        <mxCell id="var" value="&lt;b&gt;variables&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• variable_name, label_name&lt;br/&gt;• type, value&lt;br/&gt;• indicator_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="300" y="40" width="260" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- formulas -->
+        <mxCell id="for" value="&lt;b&gt;formulas&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• condition&lt;br/&gt;• indicator_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="620" y="40" width="220" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- variable_formulas -->
+        <mxCell id="vf" value="&lt;b&gt;variable_formulas (pivot)&lt;/b&gt;&lt;br/&gt;• variable_id (FK)&lt;br/&gt;• formula_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="470" y="110" width="250" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- checklist_items -->
+        <mxCell id="cli" value="&lt;b&gt;checklist_items&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• required_items (JSON)&lt;br/&gt;• score, description, sequence&lt;br/&gt;• indicator_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="300" y="430" width="280" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- departments -->
+        <mxCell id="dep" value="&lt;b&gt;departments&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• name" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="430" width="220" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- users -->
+        <mxCell id="usr" value="&lt;b&gt;users&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• title, first_name, last_name&lt;br/&gt;• positype, workline, posi, level&lt;br/&gt;• email (UNIQUE), phone&lt;br/&gt;• password, status, email_verified_at&lt;br/&gt;• remember_token&lt;br/&gt;• department_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="580" width="300" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- assignments -->
+        <mxCell id="asg" value="&lt;b&gt;assignments (pivot)&lt;/b&gt;&lt;br/&gt;• indicator_id (FK)&lt;br/&gt;• collector (FK: users)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="360" y="620" width="260" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- settings -->
+        <mxCell id="set" value="&lt;b&gt;settings&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• title&lt;br/&gt;• notify_date1, notify_time1&lt;br/&gt;• notify_date2, notify_time2&lt;br/&gt;• message&lt;br/&gt;• remind_days, remind_time, remind_enabled" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="820" width="330" height="170" as="geometry"/>
+        </mxCell>
+
+        <!-- sar_reports -->
+        <mxCell id="sar" value="&lt;b&gt;sar_reports&lt;/b&gt;&lt;br/&gt;• id (PK), year&lt;br/&gt;• standard_id (FK)&lt;br/&gt;• indicator_id (FK)&lt;br/&gt;• criteria_id (FK)&lt;br/&gt;• section1, section2, section4&lt;br/&gt;• title&lt;br/&gt;• created_by (FK), updated_by (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="680" y="430" width="320" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- sar_report_evidence -->
+        <mxCell id="sre" value="&lt;b&gt;sar_report_evidence (pivot)&lt;/b&gt;&lt;br/&gt;• id (PK)&lt;br/&gt;• sar_report_id (FK)&lt;br/&gt;• evidence_id (FK)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=6;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="430" width="300" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges (relationships) -->
+        <mxCell id="e_cat_std" edge="1" parent="1" source="cat" target="std" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ind_cat" edge="1" parent="1" source="ind" target="cat" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_cri_ind" edge="1" parent="1" source="cri" target="ind" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ev_cri" edge="1" parent="1" source="ev" target="cri" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ev_usr" edge="1" parent="1" source="ev" target="usr" style="endArrow=block;dashed=1;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_var_ind" edge="1" parent="1" source="var" target="ind" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_for_ind" edge="1" parent="1" source="for" target="ind" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_vf_var" edge="1" parent="1" source="vf" target="var" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_vf_for" edge="1" parent="1" source="vf" target="for" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_cli_ind" edge="1" parent="1" source="cli" target="ind" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_usr_dep" edge="1" parent="1" source="usr" target="dep" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_asg_ind" edge="1" parent="1" source="asg" target="ind" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_asg_usr" edge="1" parent="1" source="asg" target="usr" style="endArrow=block;html=1;dashed=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sar_std" edge="1" parent="1" source="sar" target="std" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sar_ind" edge="1" parent="1" source="sar" target="ind" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sar_cri" edge="1" parent="1" source="sar" target="cri" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sar_usr1" edge="1" parent="1" source="sar" target="usr" style="endArrow=block;html=1;dashed=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sre_sar" edge="1" parent="1" source="sre" target="sar" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sre_ev" edge="1" parent="1" source="sre" target="ev" style="endArrow=block;html=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
