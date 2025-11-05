@@ -20,7 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withMiddleware(function (Middleware $middleware) {
         // Trust proxy headers when running behind reverse proxies / load balancers
-        $middleware->use(\App\Http\Middleware\TrustProxies::class);
+        $middleware->use([\App\Http\Middleware\TrustProxies::class]);
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
 
         $middleware->web(append: [
