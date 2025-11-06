@@ -516,29 +516,54 @@
                                     class="buttonNav-item">
                                     <i class="fa-solid fa-file-pdf"></i> คู่มือ Super Admin
                                 </a>
+                                @if (file_exists(public_path('manuals/Super_admin.mp4')))
+                                    <a href="{{ asset('manuals/Super_admin.mp4') }}" target="_blank" class="buttonNav-item">
+                                        <i class="fa-solid fa-video"></i> วิดีโอคู่มือ Super Admin
+                                    </a>
+                                @endif
                             @endhasrole
                             @hasrole('system_admin')
                                 <a href="{{ asset('manuals/System_admin.pdf') }}" target="_blank"
                                     class="buttonNav-item">
                                     <i class="fa-solid fa-file-pdf"></i> คู่มือ System Admin
                                 </a>
+                                @if (file_exists(public_path('manuals/System_admin.mp4')))
+                                    <a href="{{ asset('manuals/System_admin.mp4') }}" target="_blank" class="buttonNav-item">
+                                        <i class="fa-solid fa-video"></i> วิดีโอคู่มือ System Admin
+                                    </a>
+                                @endif
                             @endhasrole
                             @hasrole('administration_admin')
                                 <a href="{{ asset('manuals/Administration_Admin.pdf') }}" target="_blank"
                                     class="buttonNav-item">
                                     <i class="fa-solid fa-file-pdf"></i> คู่มือ Administration Admin
                                 </a>
+                                @if (file_exists(public_path('manuals/Administration_Admin.mp4')))
+                                    <a href="{{ asset('manuals/Administration_Admin.mp4') }}" target="_blank" class="buttonNav-item">
+                                        <i class="fa-solid fa-video"></i> วิดีโอคู่มือ Administration Admin
+                                    </a>
+                                @endif
                             @endhasrole
                             @hasrole('qa_admin')
                                 <a href="{{ asset('manuals/qa_admin.pdf') }}" target="_blank"
                                     class="buttonNav-item">
                                     <i class="fa-solid fa-file-pdf"></i> คู่มือ QA Admin
                                 </a>
+                                @if (file_exists(public_path('manuals/qa_admin.mp4')))
+                                    <a href="{{ asset('manuals/qa_admin.mp4') }}" target="_blank" class="buttonNav-item">
+                                        <i class="fa-solid fa-video"></i> วิดีโอคู่มือ QA Admin
+                                    </a>
+                                @endif
                             @endhasrole
                             @hasrole('user')
                                 <a href="{{ asset('manuals/User.pdf') }}" target="_blank" class="buttonNav-item">
                                     <i class="fa-solid fa-file-pdf"></i> คู่มือผู้ใช้งาน (User)
                                 </a>
+                                @if (file_exists(public_path('manuals/User.mp4')))
+                                    <a href="{{ asset('manuals/User.mp4') }}" target="_blank" class="buttonNav-item">
+                                        <i class="fa-solid fa-video"></i> วิดีโอคู่มือผู้ใช้งาน (User)
+                                    </a>
+                                @endif
                             @endhasrole
                         </div>
                    

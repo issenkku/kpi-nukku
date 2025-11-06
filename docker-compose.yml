@@ -1,5 +1,9 @@
 version: "3.9"
 
+# Fix project name so named volumes (e.g. dbdata) stay consistent
+# across `docker compose up -d` runs and container recreation.
+name: kpi-nukku
+
 services:
   app:
     build:
