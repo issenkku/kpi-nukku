@@ -40,9 +40,10 @@ class DashboardKpiAdminController extends Controller
         // variables
         if ($request->has('variables')) {
             foreach ($request->variables as $varId => $value) {
+                $normalizedValue = $this->normalizeVariableValue($value);
                 Variable::updateOrCreate(
                     ['id' => $varId, 'indicator_id' => $indicator->id],
-                    ['value' => $value]
+                    ['value' => $normalizedValue]
                 );
             }
         }
@@ -144,6 +145,26 @@ class DashboardKpiAdminController extends Controller
             ->with('success', 'บันทึกข้อมูลเรียบร้อยแล้ว');
 
         // return response()->json($request->all());
+    }
+
+    /**
+     * Normalize incoming variable values so empty strings don't break numeric columns.
+     */
+    private function normalizeVariableValue($value): ?float
+    {
+        if (is_null($value)) {
+            return null;
+        }
+
+        if (is_string($value)) {
+            $value = trim($value);
+        }
+
+        if ($value === '') {
+            return null;
+        }
+
+        return is_numeric($value) ? (float) $value : null;
     }
 
     private function calculateScore($indicator)
