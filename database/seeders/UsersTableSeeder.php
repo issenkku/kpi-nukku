@@ -10,7 +10,7 @@ class UsersTableSeeder extends Seeder
 {
     public function run(): void
     {
-        DB::table('users')->insert([
+        $users = [
             [
                 'first_name' => 'System',
                 'last_name' => 'Admin',
@@ -56,7 +56,14 @@ class UsersTableSeeder extends Seeder
                 'email' => 'user@example.com',
                 'department_id' => 4,
             ],
-        ]);
+        ];
+
+        // Upsert to avoid duplicate email errors when seeding repeatedly.
+        DB::table('users')->upsert(
+            $users,
+            ['email'],
+            ['first_name', 'last_name', 'password', 'phone', 'status', 'department_id']
+        );
 
         // Assign roles using Spatie Permission
         $map = [
@@ -68,8 +75,9 @@ class UsersTableSeeder extends Seeder
         ];
         foreach ($map as $email => $role) {
             $u = User::where('email', $email)->first();
-            if ($u) { $u->assignRole($role); }
+            if ($u && ! $u->hasRole($role)) {
+                $u->assignRole($role);
+            }
         }
     }
 }
-

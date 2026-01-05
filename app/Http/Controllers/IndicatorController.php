@@ -15,6 +15,7 @@ use App\Models\Variable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class IndicatorController extends Controller
 {
@@ -84,7 +85,7 @@ class IndicatorController extends Controller
         return view('indicator.create', $data);
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
         $indicator = Indicator::with([
             'category.standard',
@@ -95,6 +96,10 @@ class IndicatorController extends Controller
             'assignments.user.department',
             'evidences',
         ])->findOrFail($id);
+
+        // Prefer explicit request standard_id, otherwise fall back to the indicator's linked standard
+        $standardId = $request->input('standard_id') ?: optional($indicator->category?->standard)->id;
+        $data = $this->formSelections($standardId);
 
         // Reuse the API shape for the view
         $data = (new IndicatorResource($indicator))->toArray(request());
@@ -113,7 +118,10 @@ class IndicatorController extends Controller
             'code' => 'required|string|max:100',
             'max_score' => 'required|numeric|min:0',
             'standard_id' => 'required|exists:standards,id',
-            'category_id' => 'required|exists:categories,id',
+            'category_id' => [
+                'required',
+                Rule::exists('categories', 'id')->where(fn($q) => $q->where('standard_id', $request->input('standard_id'))),
+            ],
             'type' => 'nullable|string',
             'deadline' => 'required|date',
 
@@ -223,19 +231,7 @@ class IndicatorController extends Controller
 
     public function edit($id)
     {
-        $data = $this->formSelections();
-        // $data['criteriaOptions'] = [];
-
-        // ใช้สำหรับ multi-select + filter
-        $data['usersForAssign'] = User::select('id', 'first_name', 'last_name', 'department_id')
-            ->orderBy('first_name')
-            ->orderBy('last_name')
-            ->get()
-            ->map(fn($u) => [
-                'id' => $u->id,
-                'name' => $u->display_name,
-                'department_id' => $u->department_id,
-            ]);
+        $standardId = request('standard_id');
 
         $indicator = Indicator::with([
             'category.standard',
@@ -246,6 +242,21 @@ class IndicatorController extends Controller
             'assignments.user.department',
             'evidences',
         ])->findOrFail($id);
+
+        $standardId = $standardId ?: optional($indicator->category?->standard)->id;
+        $data = $this->formSelections($standardId);
+
+        // ใช้สำหรับ multi-select + filter
+        $data['usersForAssign'] = User::select('id', 'first_name', 'last_name', 'department_id')
+            ->orderBy('first_name')
+            ->orderBy('last_name')
+            ->get()
+            ->map(fn($u) => [
+                'id' => $u->id,
+                'name' => $u->display_name,
+                'department_id' => $u->department_id,
+            ])
+            ->values();
 
         // Reuse the API shape for the view
         $data_indicator = (new IndicatorResource($indicator))->toArray(request());
@@ -266,7 +277,10 @@ class IndicatorController extends Controller
             'code' => 'required|string|max:100',
             'max_score' => 'required|numeric|min:0',
             'standard_id' => 'required|exists:standards,id',
-            'category_id' => 'required|exists:categories,id',
+            'category_id' => [
+                'required',
+                Rule::exists('categories', 'id')->where(fn($q) => $q->where('standard_id', $request->input('standard_id'))),
+            ],
             'type' => 'nullable|string',
             'deadline' => 'required|date',
 
@@ -412,12 +426,25 @@ class IndicatorController extends Controller
      * Private helpers
      * =========================== */
 
-    private function formSelections(): array
+    private function formSelections(?int $standardId = null): array
     {
+        $categoriesByStandard = Category::query()
+            ->orderBy('name')
+            ->get()
+            ->groupBy('standard_id')
+            ->map(function ($items) {
+                return $items->map(fn($c) => ['value' => $c->id, 'label' => $c->name])->values();
+            })
+            ->toArray();
+
         return [
             'standards' => Standard::query()->pluck('name', 'id')->toArray(),
-            'categories' => Category::query()->pluck('name', 'id')->toArray(),
+            'categories' => Category::query()
+                ->when($standardId, fn($q) => $q->where('standard_id', $standardId))
+                ->pluck('name', 'id')
+                ->toArray(),
             'departments' => Department::query()->pluck('name', 'id')->toArray(),
+            'categoriesByStandard' => $categoriesByStandard,
         ];
     }
 

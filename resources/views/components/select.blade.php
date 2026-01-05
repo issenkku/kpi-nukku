@@ -37,6 +37,7 @@
 
 <div x-data="{
     // props
+    name: @js($name),
     required: @js($required),
     searchable: @js($searchable),
 
@@ -55,17 +56,46 @@
         return this.options.filter(o => o.label.toLowerCase().includes(t));
     },
 
+    normalize(arr) {
+        return (arr || []).map(it => {
+            const v = it.value ?? it.id ?? it['{{ $optionValue }}'] ?? '';
+            const l = it.label ?? it.name ?? it['{{ $optionLabel }}'] ?? String(v);
+            return { ...it, value: String(v), label: String(l) };
+        });
+    },
+    setOptions(newOptions) {
+        this.options = this.normalize(newOptions);
+        const exists = this.options.some(o => String(o.value) === String(this.value));
+        if (!exists) this.value = '';
+        this.q = '';
+        this.hi = -1;
+        this.emitChange();
+    },
+    setValue(val) {
+        const str = val === null || val === undefined ? '' : String(val);
+        const exists = this.options.some(o => String(o.value) === str);
+        this.value = exists ? str : '';
+        this.emitChange();
+    },
+    emitChange() {
+        const payload = { name: this.name, value: this.value };
+        this.$dispatch('select-change', payload);
+        window.dispatchEvent(new CustomEvent('select-change', { detail: payload }));
+    },
+
     // actions
     choose(o) {
         this.value = o.value;
         this.open = false;
         this.q = '';
         this.hi = -1;
+        this.emitChange();
     },
     clear() {
         this.value = '';
         this.q = '';
         this.hi = -1;
+        this.emitChange();
     },
     move(d) {
         const len = this.filtered.length;
@@ -93,7 +123,24 @@
             }
         });
     }
-}" x-init="hookFormValidation()" class="relative">
+}" x-init="hookFormValidation()" class="relative"
+
+    {{-- อัปเดต options จากภายนอก --}}
+    @select-update-options.window="
+        if ($event.detail?.name === name) {
+            setOptions($event.detail.options || []);
+            if ($event.detail?.value !== undefined) {
+                setValue($event.detail.value);
+            } else if ($event.detail?.keep !== undefined) {
+                setValue($event.detail.keep);
+            }
+            if ($event.detail?.open) {
+                open = true;
+                if (searchable) $nextTick(() => $refs.search?.focus());
+            }
+        }
+    "
+>
     <label class="block">
         @if ($label)
             <span class="text-sm font-medium text-slate-700">

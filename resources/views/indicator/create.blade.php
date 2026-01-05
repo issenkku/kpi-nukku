@@ -5,10 +5,26 @@
 @section('content')
     <form action="{{ route('indicator.store') }}" method="POST" x-data="{
         score_acc: '',
+        categoriesByStandard: @js($categoriesByStandard ?? []),
         init() {
             this.score_acc = this.$el.dataset.initialScoreAcc ?? '';
+            // preload categories based on current standard (old input)
+            const std = document.getElementById('standard_id')?.value;
+            if (std) this.updateCategories(std, document.getElementById('category_id')?.value || '');
+        },
+        updateCategories(stdId, keepValue = '') {
+            const opts = this.categoriesByStandard[String(stdId)] || [];
+            const keep = keepValue && opts.some(o => String(o.value) === String(keepValue)) ? keepValue : '';
+            window.dispatchEvent(new CustomEvent('select-update-options', {
+                detail: { name: 'category_id', options: opts, value: keep }
+            }));
         }
     }"
+        @select-change.window="
+            if ($event.detail?.name === 'standard_id') {
+                updateCategories($event.detail.value, document.getElementById('category_id')?.value || '');
+            }
+        "
         data-initial-score-acc="{{ old('max_score', '') }}">
         @csrf
         <div class="w-full mx-auto">

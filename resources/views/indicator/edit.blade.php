@@ -26,6 +26,7 @@
 
     $standards = $info['standards'] ?? [];
     $categories = $info['categories'] ?? [];
+    $categoriesByStandard = $info['categoriesByStandard'] ?? [];
 
     $departments = $info['departments'] ?? [];
     $usersForAssign = $info['usersForAssign'] ?? [];
@@ -115,11 +116,27 @@
         x-data="{
             score_acc: '',
             scoringMethod: '',
+            categoriesByStandard: @js($categoriesByStandard ?? []),
             init() {
                 this.score_acc = this.$el.dataset.initialScoreAcc ?? '';
                 this.scoringMethod = this.$el.dataset.defaultScoringMethod || '';
+                const std = document.getElementById('standard_id')?.value || '';
+                const keepCat = document.getElementById('category_id')?.value || '';
+                if (std) this.updateCategories(std, keepCat);
+            },
+            updateCategories(stdId, keepValue = '') {
+                const opts = this.categoriesByStandard[String(stdId)] || [];
+                const keep = keepValue && opts.some(o => String(o.value) === String(keepValue)) ? keepValue : '';
+                window.dispatchEvent(new CustomEvent('select-update-options', {
+                    detail: { name: 'category_id', options: opts, value: keep }
+                }));
             }
         }"
+        @select-change.window="
+            if ($event.detail?.name === 'standard_id') {
+                updateCategories($event.detail.value, document.getElementById('category_id')?.value || '');
+            }
+        "
         data-initial-score-acc="{{ old('max_score', $maxScore) }}"
         data-default-scoring-method="{{ $scoringMethodFormValue }}">
         @csrf
