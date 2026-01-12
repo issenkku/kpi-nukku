@@ -443,6 +443,9 @@
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/fontfamily/trumbowyg.fontfamily.min.js">
     </script>
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/table/ui/trumbowyg.table.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/table/trumbowyg.table.min.js"></script>
 
     {{-- <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script> --}}
     <script>
@@ -798,6 +801,76 @@
                 } catch (_) {}
             }
 
+            function insertHtmlIntoTextarea(textarea, html) {
+                const start = textarea.selectionStart ?? textarea.value.length;
+                const end = textarea.selectionEnd ?? textarea.value.length;
+                textarea.value = textarea.value.slice(0, start) + html + textarea.value.slice(end);
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                try {
+                    textarea.selectionStart = textarea.selectionEnd = start + html.length;
+                } catch (_) {}
+            }
+
+            function tabTextToTableHtml(text) {
+                const rows = String(text || '').trim().split(/\r?\n/).filter(r => r.length);
+                if (!rows.length) return '';
+                const pickDelimiter = (lines) => {
+                    const hasTab = lines.some(r => r.includes('\t'));
+                    if (hasTab) return '\t';
+                    const candidates = [',', ';', '|'];
+                    let best = null;
+                    for (const d of candidates) {
+                        const counts = lines.map(r => r.split(d).length);
+                        const max = Math.max(...counts);
+                        if (max < 2) continue;
+                        const same = counts.filter(c => c === max).length;
+                        if (!best || (same > best.same) || (same === best.same && max > best.max)) {
+                            best = { d, max, same };
+                        }
+                    }
+                    if (best) return best.d;
+                    // fallback: split on 2+ spaces
+                    const spaceCounts = lines.map(r => r.split(/\s{2,}/).length);
+                    const spaceMax = Math.max(...spaceCounts);
+                    return spaceMax >= 2 ? /\s{2,}/ : null;
+                };
+
+                const delimiter = pickDelimiter(rows);
+                if (!delimiter) return '';
+                const splitter = delimiter instanceof RegExp ? delimiter : delimiter;
+                const matrix = rows.map(r => r.split(splitter));
+                const hasTable = matrix.length > 1 || matrix.some(r => r.length > 1);
+                if (!hasTable) return '';
+                const escapeHtml = (s) => String(s)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+                const body = matrix.map(cols => {
+                    const tds = cols.map(c => `<td>${escapeHtml(c)}</td>`).join('');
+                    return `<tr>${tds}</tr>`;
+                }).join('');
+                return `<table><tbody>${body}</tbody></table>`;
+            }
+
+            function extractTableHtmlFromClipboard(evt) {
+                const html = evt?.clipboardData?.getData?.('text/html') || '';
+                if (html) {
+                    const match = html.match(/<table[\s\S]*<\/table>/i);
+                    if (match) return match[0];
+                }
+                const text = evt?.clipboardData?.getData?.('text/plain') || '';
+                return tabTextToTableHtml(text);
+            }
+            window.extractTableHtmlFromClipboard = extractTableHtmlFromClipboard;
+
+            function handleTabularPaste(evt, insertHtml) {
+                const tableHtml = extractTableHtmlFromClipboard(evt);
+                if (!tableHtml) return false;
+                evt.preventDefault();
+                insertHtml(tableHtml);
+                return true;
+            }
+
             function attachPasteImage($editor, textareaEl) {
                 if ($editor && $editor.length) {
                     const $box = $editor.closest('.trumbowyg-box');
@@ -812,6 +885,11 @@
                         $ed.data('pasteImageBound', true);
                         $ed.on('paste', function(e) {
                             const evt = e.originalEvent || e;
+                            if (handleTabularPaste(evt, (html) => {
+                                    try { $editor.trumbowyg('execCmd', { cmd: 'insertHTML', param: html }); } catch (_) {}
+                                })) {
+                                return;
+                            }
                             const items = evt?.clipboardData?.items || [];
                             for (const item of items) {
                                 if (item.type && item.type.indexOf('image') === 0) {
@@ -861,6 +939,7 @@
                         lastActiveEditor = null;
                     });
                     textareaEl.addEventListener('paste', function(e) {
+                        if (handleTabularPaste(e, (html) => insertHtmlIntoTextarea(textareaEl, html))) return;
                         const items = e.clipboardData?.items || [];
                         for (const item of items) {
                             if (item.type && item.type.indexOf('image') === 0) {
@@ -914,6 +993,7 @@
                             ['link'],
                             ['justifyLeft', 'justifyCenter', 'justifyRight', 'justifyFull'],
                             ['unorderedList', 'orderedList'],
+                            ['table'],
                             ['horizontalRule'],
                             ['removeformat'],
                             ['fullscreen']
@@ -1014,7 +1094,7 @@
                                 removeformatPasted: true,
                                 btns: [
                                     ['viewHTML'], ['undo', 'redo'], ['formatting'], ['strong', 'em', 'del'],
-                                    ['fontsize', 'foreColor'], ['link'], ['unorderedList', 'orderedList'],
+                                    ['fontsize', 'foreColor'], ['link'], ['unorderedList', 'orderedList'], ['table'],
                                     ['justifyLeft','justifyCenter','justifyRight','justifyFull'], ['horizontalRule'], ['removeformat']
                                 ]
                             });
@@ -1126,6 +1206,37 @@
     </script>
     <script>
         document.addEventListener('paste', function(e) {
+            const tableHtml = (typeof extractTableHtmlFromClipboard === 'function')
+                ? extractTableHtmlFromClipboard(e)
+                : (window.extractTableHtmlFromClipboard ? window.extractTableHtmlFromClipboard(e) : '');
+            if (tableHtml) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                const target = (() => {
+                    if (lastActiveEditor && lastActiveEditor.length) return { type: 'trumbowyg', $el: lastActiveEditor };
+                    if (lastActiveTextarea) return { type: 'textarea', el: lastActiveTextarea };
+                    const boxes = Array.from(document.querySelectorAll('.criteria-detail .trumbowyg-box'));
+                    const visibleBox = boxes.find(b => b.offsetParent !== null);
+                    if (visibleBox && window.$) {
+                        const $ta = $(visibleBox).prev('textarea');
+                        if ($ta.length) return { type: 'trumbowyg', $el: $ta };
+                    }
+                    const textareas = Array.from(document.querySelectorAll('.criteria-detail-editor'));
+                    const visibleTextarea = textareas.find(t => t.offsetParent !== null);
+                    if (visibleTextarea) return { type: 'textarea', el: visibleTextarea };
+                    return null;
+                })();
+                if (target) {
+                    if (target.type === 'trumbowyg') {
+                        try {
+                            target.$el.trumbowyg('execCmd', { cmd: 'insertHTML', param: tableHtml });
+                        } catch (_) {}
+                    } else {
+                        insertHtmlIntoTextarea(target.el || target.$el?.[0], tableHtml);
+                    }
+                }
+                return;
+            }
             const items = e.clipboardData?.items || [];
             let imageItem = null;
             for (const item of items) {
@@ -1784,6 +1895,25 @@
         .criteria-detail-view img {
             max-width: none;
             height: auto;
+        }
+
+        .trumbowyg-editor table,
+        .criteria-detail-view table {
+            min-width: 100%;
+            width: max-content;
+            table-layout: auto;
+        }
+
+        .trumbowyg-editor,
+        .criteria-detail-view {
+            overflow-x: auto;
+        }
+
+        .trumbowyg-editor th,
+        .trumbowyg-editor td,
+        .criteria-detail-view th,
+        .criteria-detail-view td {
+            word-break: break-word;
         }
 
         .trumbowyg-box.trumbowyg-editor-visible .trumbowyg-editor:focus {
