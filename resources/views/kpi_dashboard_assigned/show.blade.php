@@ -103,7 +103,7 @@
                                 ->sortByDesc(function($e){ return $e->created_at; })
                                 ->first(function($e){ return filled($e->detail); });
                             $detailId = $detailEvidence?->id;
-                            $detailHtml = $detailEvidence->detail ?? '';
+                            $detailHtml = $detailEvidence->detail ?? ($criteria->report ?? '');
                         @endphp
 
                         <div class="criteria-detail mb-3"

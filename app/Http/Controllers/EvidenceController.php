@@ -292,20 +292,15 @@ class EvidenceController extends Controller
 
             // ========== 3) ถ้ามีแค่ Detail ==========
             if (!$hasUrls && !$hasFiles && $hasDetail) {
-                $evidence = new Evidence();
-                $evidence->path        = [];
-                $evidence->detail      = $request->input('detail');
-                $evidence->status      = true;
-                $evidence->criteria_id = $criteria->id;
-                $evidence->user_id     = Auth::id();
-                $evidence->name        = "รายละเอียดเพิ่มเติม";
-                $evidence->type        = "note";
-                $evidence->save();
+                // เก็บรายงานผลลง criterias.report เท่านั้น (ไม่สร้าง evidence ใหม่)
+                $criteria->report = $request->input('detail');
+                $criteria->save();
+            }
 
-                // Log::info('Evidence saved (note)', [
-                //     'evidence_id' => $evidence->id,
-                //     'name'        => $evidence->name,
-                // ]);
+            if ($hasDetail && ($hasFiles || $hasUrls)) {
+                // Sync report for quick access when evidences are not loaded
+                $criteria->report = $request->input('detail');
+                $criteria->save();
             }
 
             if ($request->expectsJson()) {
@@ -466,6 +461,13 @@ class EvidenceController extends Controller
 
             $evidence->update($updateData);
             $evidence->load(['criteria', 'user']);
+
+            if (array_key_exists('detail', $updateData)) {
+                $criteriaId = $updateData['criteria_id'] ?? $evidence->criteria_id;
+                Criteria::where('id', $criteriaId)->update([
+                    'report' => $updateData['detail'],
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
