@@ -37,13 +37,13 @@
         /* Last resort fallback; may not fully support Thai */
         body, * { font-family: 'DejaVu Sans', sans-serif !important; }
         @endif
-        @page { margin: 20mm 15mm; }
-        body { font-size: 13px; line-height: 1.45; color: #111; }
+        @page { size: A4 portrait; margin: 25mm; }
+        body { font-size: 12px; line-height: 1.4; color: #111; }
 
-        h2 { text-align: center; font-size: 20px; margin-bottom: 20px; font-weight: 700; }
-        h3 { font-size: 18px; margin-top: 20px; border-bottom: 1px solid #000; font-weight: 600; }
-        h4 { font-size: 16px; margin-top: 12px; font-weight: 600; }
-        h5 { font-size: 15px; margin-top: 10px; font-weight: 600; }
+        h2 { text-align: center; font-size: 16px; margin-bottom: 12px; font-weight: 700; }
+        h3 { font-size: 14px; margin-top: 14px; border-bottom: 1px solid #000; font-weight: 600; }
+        h4 { font-size: 12px; margin-top: 10px; font-weight: 600; }
+        h5 { font-size: 11px; margin-top: 8px; font-weight: 600; }
         strong, b { font-weight: 600; }
 
         p { margin: 0 0 6px 0; }
@@ -53,17 +53,67 @@
             width: 100%;
             border-collapse: collapse;
             margin-bottom: 16px;
+            table-layout: fixed;
+        }
+
+        /* Prevent nested tables from overflowing their cells */
+        td table {
+            width: 100% !important;
+            max-width: 100% !important;
+            table-layout: fixed;
+            page-break-inside: auto;
+        }
+        .criteria-table td table td,
+        .criteria-table td table th {
+            height: auto !important;
+            page-break-inside: auto;
+        }
+        /* Compact but consistent font in criteria report column */
+        .criteria-table td:nth-child(4),
+        .criteria-table td:nth-child(4) * {
+            font-size: 8px;
+            line-height: 1.1;
+        }
+        .criteria-table td:nth-child(4) table td,
+        .criteria-table td:nth-child(4) table th {
+            padding: 1px 2px;
+        }
+        .criteria-table td:nth-child(4) * {
+            max-width: 100% !important;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        .criteria-table td:nth-child(4),
+        .criteria-table td:nth-child(4) table,
+        .criteria-table td:nth-child(4) tr,
+        .criteria-table td:nth-child(4) td,
+        .criteria-table td:nth-child(4) th {
+            page-break-inside: auto;
+        }
+        .criteria-report,
+        .criteria-report.long,
+        .criteria-report.longer,
+        .criteria-report.longest {
+            font-size: 8px;
+            line-height: 1.1;
         }
         thead { display: table-header-group; }
         tfoot { display: table-footer-group; }
-        /* Allow rows to split across pages to prevent truncation of long rows */
+        /* Allow rows to split across pages to prevent truncation */
         tr { page-break-inside: auto; }
+        .criteria-table tr { page-break-inside: auto; }
         td, th {
             border: 1px solid #000;
-            padding: 4px 5px;
+            padding: 3px 4px;
             vertical-align: top;
             word-break: break-word;
-            white-space: pre-line; /* keep line breaks but collapse spaces */
+            overflow-wrap: anywhere;
+            white-space: normal;
+            overflow: visible;
+            page-break-inside: auto;
         }
         th { background: #f5f7fa; text-align: center; }
 
@@ -75,25 +125,34 @@
         td ol { margin: 0; padding-left: 18px; }
 
         /* Scale images if any appear in rich text */
-        td img { max-width: 100%; height: auto; }
+        td img { max-width: 100%; max-height: 120mm; height: auto; page-break-inside: avoid; }
 
         .score { text-align: center; font-weight: bold; }
         .tick-img { height: 12px; vertical-align: middle; }
 
-        /* Criteria table column widths */
+        /* Criteria table column widths (match DOCX proportions) */
         .criteria-table th:nth-child(1),
-        .criteria-table td:nth-child(1) { width: 40px; }
+        .criteria-table td:nth-child(1) { width: 6%; min-width: 32px; }
+        .criteria-table th:nth-child(2),
+        .criteria-table td:nth-child(2) { width: 20%; }
         .criteria-table th:nth-child(3),
-        .criteria-table td:nth-child(3) { width: 80px; }
+        .criteria-table td:nth-child(3) { width: 12%; }
         .criteria-table th:nth-child(4),
-        .criteria-table td:nth-child(4) { width: 200px; }
+        .criteria-table td:nth-child(4) { width: 50%; }
         .criteria-table th:nth-child(5),
-        .criteria-table td:nth-child(5) { width: 150px; }
+        .criteria-table td:nth-child(5) { width: 12%; }
 
         .criteria-table td,
         .criteria-table th,
         .score-table td,
         .score-table th { font-size: 12px; }
+
+        .criteria-table th:first-child,
+        .criteria-table td:first-child {
+            padding: 1px 2px;
+            font-size: 10px;
+            white-space: nowrap;
+        }
     </style>
 
     @php
@@ -131,13 +190,20 @@
 
                 {{-- ✅ ตารางเกณฑ์ (แยกทีละ indicator) --}}
                 <table class="criteria-table">
+                    <colgroup>
+                     <col style="width: 40px;">
+                        <col style="width: 32%;">
+                        <col style="width: 12%;">
+                        <col style="width: 41%;">
+                        <col style="width: 12%;">
+                    </colgroup>
                     <thead>
                         <tr>
-                            <th style="width:40px">ข้อ</th>
+                            <th>ข้อ</th>
                             <th>เกณฑ์มาตรฐาน</th>
-                            <th style="width:80px">ผลการดำเนินงาน</th>
-                            <th style="width:200px">รายงานผลการดำเนินงาน</th>
-                            <th style="width:150px">เอกสารหลักฐาน</th>
+                            <th>ผลการดำเนินงาน</th>
+                            <th>รายงานผลการดำเนินงาน</th>
+                            <th>เอกสารหลักฐาน</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -147,17 +213,32 @@
                                 <td>{{ $cri->name }}</td>
                                 <td class="score">{!! $cri->status ? $tickImg : '-' !!}</td>
                                 @php
-                                    // Pick the most recent non-empty detail
-                                    $detailHtml = '';
-                                    if ($cri->relationLoaded('evidences')) {
+                                    // Prefer criteria.report, fallback to most recent evidence detail
+                                    $detailHtml = (string) ($cri->report ?? '');
+                                    if (trim(strip_tags(html_entity_decode($detailHtml))) === '' && $cri->relationLoaded('evidences')) {
                                         $ordered = $cri->evidences->sortByDesc(function($e){ return $e->created_at; });
                                         foreach ($ordered as $ev) {
                                             $h = (string) ($ev->detail ?? '');
                                             if (trim(strip_tags(html_entity_decode($h))) !== '') { $detailHtml = $h; break; }
                                         }
                                     }
+                                    $detailHtml = preg_replace('/\sstyle=("|\')(.*?)\1/i', '', $detailHtml);
+                                    $detailHtml = preg_replace('/\s(width|height|cellpadding|cellspacing)=("|\')?[^"\'>\s]+\2?/i', '', $detailHtml);
+                                    $detailHtml = preg_replace('/\s(width|height)=("|\')?[^"\'>\s]+\2?/i', '', $detailHtml);
+                                    $detailPlain = trim(strip_tags(html_entity_decode($detailHtml)));
+                                    $detailLen = function_exists('mb_strlen')
+                                        ? mb_strlen($detailPlain, 'UTF-8')
+                                        : strlen($detailPlain);
+                                    $reportClass = 'criteria-report';
+                                    if ($detailLen >= 800) {
+                                        $reportClass .= ' longest';
+                                    } elseif ($detailLen >= 400) {
+                                        $reportClass .= ' longer';
+                                    } elseif ($detailLen >= 200) {
+                                        $reportClass .= ' long';
+                                    }
                                 @endphp
-                                <td>{!! $detailHtml !== '' ? $detailHtml : '-' !!}</td>
+                                <td class="{{ $reportClass }}">{!! $detailHtml !== '' ? $detailHtml : '-' !!}</td>
                                 <td>
                                     @if ($cri->evidences->isNotEmpty())
                                         <ul>

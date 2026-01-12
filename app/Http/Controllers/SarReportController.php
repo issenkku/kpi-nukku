@@ -13,6 +13,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use PhpOffice\PhpWord\Shared\Html;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 use PhpOffice\PhpWord\PhpWord;
 use PhpOffice\PhpWord\IOFactory;
 
@@ -20,6 +21,7 @@ use PhpOffice\PhpWord\Style\ListItem;
 
 class SarReportController extends Controller
 {
+    protected array $tempImageFiles = [];
     public function index()
     {
         $reports = SarReport::with(['standard', 'indicator', 'criteria'])->paginate(10);
@@ -282,7 +284,8 @@ class SarReportController extends Controller
         }
 
         // ✅ ทำความสะอาด HTML ให้เหมาะกับ Word/PhpWord (ตัด font/span/style ฯลฯ)
-        $content = $this->cleanHtmlForWord($content);
+        $allowTablesImages = stripos($content, '<table') !== false || stripos($content, '<img') !== false;
+        $content = $this->cleanHtmlForWord($content, $allowTablesImages);
 
         // ถ้าไม่มีแท็ก HTML ให้แตกบรรทัดเป็นย่อหน้า
         if (strpos($content, '<') === false && strpos($content, '>') === false) {
@@ -349,6 +352,58 @@ class SarReportController extends Controller
                     }
                     $element->addTextBreak();
                     break;
+                case 'table':
+                    $rows = [];
+                    $maxCols = 0;
+                    foreach ($node->childNodes as $child) {
+                        $childTag = $child->nodeType === XML_ELEMENT_NODE ? strtolower($child->nodeName) : '';
+                        if (in_array($childTag, ['thead', 'tbody', 'tfoot'], true)) {
+                            foreach ($child->childNodes as $tr) {
+                                if ($tr->nodeType === XML_ELEMENT_NODE && strtolower($tr->nodeName) === 'tr') {
+                                    $rows[] = $tr;
+                                }
+                            }
+                        } elseif ($childTag === 'tr') {
+                            $rows[] = $child;
+                        }
+                    }
+                    foreach ($rows as $tr) {
+                        $count = 0;
+                        foreach ($tr->childNodes as $cell) {
+                            if ($cell->nodeType === XML_ELEMENT_NODE) {
+                                $cellTag = strtolower($cell->nodeName);
+                                if ($cellTag === 'td' || $cellTag === 'th') {
+                                    $count++;
+                                }
+                            }
+                        }
+                        $maxCols = max($maxCols, $count);
+                    }
+                    $cellWidth = $maxCols > 0 ? (int) floor(9000 / $maxCols) : 2000;
+                    $tbl = $element->addTable(['borderSize' => 6, 'borderColor' => '000000']);
+                    foreach ($rows as $tr) {
+                        $tbl->addRow();
+                        foreach ($tr->childNodes as $cellNode) {
+                            if ($cellNode->nodeType !== XML_ELEMENT_NODE) {
+                                continue;
+                            }
+                            $cellTag = strtolower($cellNode->nodeName);
+                            if ($cellTag !== 'td' && $cellTag !== 'th') {
+                                continue;
+                            }
+                            $cell = $tbl->addCell($cellWidth);
+                            foreach ($cellNode->childNodes as $child) {
+                                $this->appendNodeSafe($cell, $child, $listLevel);
+                            }
+                        }
+                    }
+                    break;
+                case 'img':
+                    $src = $node->getAttribute('src');
+                    if ($src) {
+                        $this->addImageFromSrc($element, $src);
+                    }
+                    break;
 
                 case 'ul':
                 case 'ol':
@@ -398,10 +453,279 @@ class SarReportController extends Controller
         }
     }
 
+    protected function addImageFromSrc($element, string $src): void
+    {
+        if (preg_match('/^data:image\\/(\\w+);base64,(.+)$/', $src, $m)) {
+            $ext = strtolower($m[1]);
+            $data = base64_decode($m[2]);
+            if ($data === false) return;
+            $path = $this->storeTempImage($data, $ext);
+            if ($path) {
+                $element->addImage($path, ['width' => 380]);
+            }
+            return;
+        }
+        if (filter_var($src, FILTER_VALIDATE_URL) || file_exists($src)) {
+            $element->addImage($src, ['width' => 380]);
+        }
+    }
+
+    protected function extractImageSources(string $html): array
+    {
+        $srcs = [];
+        if ($html === '') return $srcs;
+        if (preg_match_all('/<img[^>]+src=["\']([^"\']+)["\']/i', $html, $m)) {
+            $srcs = $m[1] ?? [];
+        }
+        return array_values(array_unique(array_filter($srcs)));
+    }
+
+    protected function extractTableTextFromHtml(string $html): string
+    {
+        $html = (string) ($html ?? '');
+        if (trim($html) === '') return '';
+
+        $doc = new \DOMDocument('1.0', 'UTF-8');
+        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $body = $doc->getElementsByTagName('body')->item(0);
+        if (!$body) {
+            return trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
+        }
+
+        $parts = [];
+        $tableRows = [];
+        foreach ($body->childNodes as $node) {
+            if ($node->nodeType !== XML_ELEMENT_NODE) {
+                $text = trim($node->textContent ?? '');
+                if ($text !== '') $parts[] = $text;
+                continue;
+            }
+            $tag = strtolower($node->nodeName);
+            if ($tag === 'table') {
+                $rows = [];
+                foreach ($node->getElementsByTagName('tr') as $tr) {
+                    $cells = [];
+                    foreach ($tr->childNodes as $cell) {
+                        if ($cell->nodeType !== XML_ELEMENT_NODE) continue;
+                        $cellTag = strtolower($cell->nodeName);
+                        if ($cellTag !== 'td' && $cellTag !== 'th') continue;
+                        $cellText = trim(strip_tags($cell->textContent ?? ''));
+                        $cells[] = $cellText;
+                    }
+                    if ($cells) {
+                        $rows[] = $cells;
+                    }
+                }
+                if ($rows) {
+                    $tableRows = array_merge($tableRows, $rows);
+                }
+            } else {
+                $text = trim($node->textContent ?? '');
+                if ($text !== '') $parts[] = $text;
+            }
+        }
+
+        if ($tableRows) {
+            $parts[] = $this->formatAsciiTable($tableRows);
+        }
+
+        $result = trim(implode("\n", $parts));
+        if ($result !== '') {
+            return $result;
+        }
+
+        // Fallback: simple regex-based table to TSV
+        $raw = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $raw = preg_replace('/<\/(td|th)>/i', "\t", $raw);
+        $raw = preg_replace('/<\/tr>/i', "\n", $raw);
+        $raw = strip_tags($raw);
+        $raw = preg_replace("/\t+/", "\t", $raw);
+        $raw = preg_replace("/\n+/", "\n", $raw);
+        return trim($raw);
+    }
+
+    protected function extractTableRowsFromHtml(string $html): array
+    {
+        $html = (string) ($html ?? '');
+        if (trim($html) === '') return [];
+        $doc = new \DOMDocument('1.0', 'UTF-8');
+        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $body = $doc->getElementsByTagName('body')->item(0);
+        if (!$body) return [];
+
+        $rows = [];
+        foreach ($body->getElementsByTagName('table') as $table) {
+            foreach ($table->getElementsByTagName('tr') as $tr) {
+                $cells = [];
+                foreach ($tr->childNodes as $cell) {
+                    if ($cell->nodeType !== XML_ELEMENT_NODE) continue;
+                    $cellTag = strtolower($cell->nodeName);
+                    if ($cellTag !== 'td' && $cellTag !== 'th') continue;
+                    $cellText = trim(strip_tags($cell->textContent ?? ''));
+                    $cells[] = $cellText;
+                }
+                if ($cells) {
+                    $rows[] = $cells;
+                }
+            }
+        }
+        return $rows;
+    }
+
+    protected function extractReportBlocksFromHtml(string $html): array
+    {
+        $html = (string) ($html ?? '');
+        if (trim($html) === '') {
+            return [];
+        }
+
+        $doc = new \DOMDocument('1.0', 'UTF-8');
+        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $body = $doc->getElementsByTagName('body')->item(0);
+        if (!$body) {
+            $text = trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
+            return $text !== '' ? [['type' => 'text', 'text' => $text]] : [];
+        }
+
+        $blocks = [];
+        $currentText = '';
+        $flushText = function () use (&$blocks, &$currentText) {
+            $text = trim(preg_replace('/\s+/', ' ', $currentText));
+            if ($text !== '') {
+                $blocks[] = ['type' => 'text', 'text' => $text];
+            }
+            $currentText = '';
+        };
+
+        $walk = function ($node) use (&$walk, &$blocks, &$currentText, $flushText) {
+            if (!$node) {
+                return;
+            }
+            if ($node->nodeType === XML_TEXT_NODE) {
+                $currentText .= ' ' . $node->textContent;
+                return;
+            }
+            if ($node->nodeType !== XML_ELEMENT_NODE) {
+                return;
+            }
+
+            $tag = strtolower($node->nodeName);
+            if ($tag === 'img') {
+                $flushText();
+                $src = $node->getAttribute('src');
+                if ($src !== '') {
+                    $blocks[] = ['type' => 'image', 'src' => $src];
+                }
+                return;
+            }
+            if ($tag === 'table') {
+                $flushText();
+                $rows = [];
+                foreach ($node->getElementsByTagName('tr') as $tr) {
+                    $cells = [];
+                    foreach ($tr->childNodes as $cell) {
+                        if ($cell->nodeType !== XML_ELEMENT_NODE) {
+                            continue;
+                        }
+                        $cellTag = strtolower($cell->nodeName);
+                        if ($cellTag !== 'td' && $cellTag !== 'th') {
+                            continue;
+                        }
+                        $cells[] = trim(strip_tags($cell->textContent ?? ''));
+                    }
+                    if (!empty($cells)) {
+                        $rows[] = $cells;
+                    }
+                }
+                if (!empty($rows)) {
+                    $blocks[] = ['type' => 'table', 'rows' => $rows];
+                }
+                return;
+            }
+
+            $isBlock = in_array($tag, ['p', 'div', 'li'], true);
+            foreach ($node->childNodes as $child) {
+                $walk($child);
+            }
+            if ($tag === 'br' || $isBlock) {
+                $currentText .= "\n";
+            }
+        };
+
+        foreach ($body->childNodes as $child) {
+            $walk($child);
+        }
+        $flushText();
+
+        return $blocks;
+    }
+
+    protected function extractPlainTextWithoutTables(string $html): string
+    {
+        $html = (string) ($html ?? '');
+        if (trim($html) === '') return '';
+        $doc = new \DOMDocument('1.0', 'UTF-8');
+        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $body = $doc->getElementsByTagName('body')->item(0);
+        if (!$body) {
+            return trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
+        }
+        $parts = [];
+        foreach ($body->childNodes as $node) {
+            if ($node->nodeType !== XML_ELEMENT_NODE) {
+                $text = trim($node->textContent ?? '');
+                if ($text !== '') $parts[] = $text;
+                continue;
+            }
+            if (strtolower($node->nodeName) === 'table') {
+                continue;
+            }
+            $text = trim($node->textContent ?? '');
+            if ($text !== '') $parts[] = $text;
+        }
+        return trim(implode("\n", $parts));
+    }
+
+    protected function formatAsciiTable(array $rows): string
+    {
+        if (empty($rows)) return '';
+        $lines = [];
+        foreach ($rows as $r) {
+            $cells = array_map(function ($c) {
+                $c = trim(preg_replace('/\s+/', ' ', (string) $c));
+                return $c;
+            }, $r);
+            $lines[] = implode("\t", $cells);
+        }
+        return implode("\n", $lines);
+    }
+
+    protected function storeTempImage(string $data, string $ext): ?string
+    {
+        $dir = storage_path('app/tmp');
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+        $ext = preg_replace('/[^a-z0-9]/i', '', $ext) ?: 'png';
+        $path = $dir . DIRECTORY_SEPARATOR . 'sar_img_' . uniqid('', true) . '.' . $ext;
+        if (@file_put_contents($path, $data) === false) {
+            return null;
+        }
+        $this->tempImageFiles[] = $path;
+        register_shutdown_function(function () use ($path) {
+            @unlink($path);
+        });
+        return $path;
+    }
+
     /**
      * Clean HTML: ลบแท็ก <font> ออก และ normalize ให้ Word อ่านได้
      */
-    protected function cleanHtmlForWord(string $html): string
+    protected function cleanHtmlForWord(string $html, bool $allowTablesImages = false): string
     {
         if (trim($html) === '') {
             return '';
@@ -415,6 +739,9 @@ class SarReportController extends Controller
 
         // 3) อนุญาตเฉพาะแท็กที่ Word รองรับ
         $allowed = '<p><br><b><strong><i><em><u><ul><ol><li>';
+        if ($allowTablesImages) {
+            $allowed .= '<table><thead><tbody><tr><th><td><img>';
+        }
         $html = strip_tags($html, $allowed);
 
         // 4) Normalize <br> → <br/>
@@ -505,6 +832,14 @@ class SarReportController extends Controller
             } catch (\Throwable $e) {}
             return '';
         };
+        // helper to prefer criterias.report, fallback to evidence.detail
+        $getCriteriaReportHtml = function ($cri) use ($getEvidenceDetailHtml) {
+            $reportHtml = (string) ($cri->report ?? '');
+            if (trim(strip_tags(html_entity_decode($reportHtml))) === '') {
+                $reportHtml = $getEvidenceDetailHtml($cri);
+            }
+            return $reportHtml;
+        };
 
         // Clone object for rendering and scrub HTML fields
         $reportToRender = clone $report;
@@ -513,7 +848,7 @@ class SarReportController extends Controller
         $reportToRender->section4 = $stripFonts($reportToRender->section4);
         if ($reportToRender->indicator && $reportToRender->indicator->criterias) {
             foreach ($reportToRender->indicator->criterias as $cri) {
-                $cri->report = $stripFonts($getEvidenceDetailHtml($cri));
+                $cri->report = $stripFonts($getCriteriaReportHtml($cri));
             }
         }
 
@@ -533,6 +868,11 @@ class SarReportController extends Controller
                 ->orderBy('indicators.id')
                 ->select('indicators.*')
                 ->get();
+            foreach ($allIndicators as $ind) {
+                foreach ($ind->criterias as $cri) {
+                    $cri->report = $stripFonts($getCriteriaReportHtml($cri));
+                }
+            }
 
             $reportToRender->setRelation('indicators', $allIndicators);
 
@@ -559,7 +899,7 @@ class SarReportController extends Controller
             $sheet->setTitle('Indicators');
 
             $row = 1;
-            $sheet->mergeCells("A{$row}:F{$row}")
+            $sheet->mergeCells("A{$row}:I{$row}")
                 ->setCellValue("A{$row}", "SAR Report " . (string)$report->year);
             $sheet->getStyle("A{$row}")->getFont()->setBold(true)->setSize(14);
             $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal('center');
@@ -582,14 +922,14 @@ class SarReportController extends Controller
 
             foreach ($indicators as $stdName => $indsByStd) {
                 // ===== หัวมาตรฐาน =====
-                $sheet->mergeCells("A{$row}:F{$row}")
+                $sheet->mergeCells("A{$row}:I{$row}")
                     ->setCellValue("A{$row}", "มาตรฐาน: {$stdName}");
                 $sheet->getStyle("A{$row}")->getFont()->setBold(true);
                 $row++;
 
                 foreach ($indsByStd->groupBy(fn($i) => optional($i->category)->name ?? 'ไม่ระบุด้าน') as $catName => $inds) {
                     // ===== หัวด้าน =====
-                    $sheet->mergeCells("A{$row}:F{$row}")
+                    $sheet->mergeCells("A{$row}:I{$row}")
                         ->setCellValue("A{$row}", "ด้าน: {$catName}");
                     $sheet->getStyle("A{$row}")->getFont()->setBold(true);
                     $row++;
@@ -597,7 +937,7 @@ class SarReportController extends Controller
                     foreach ($inds as $ind) {
                         // ===== หัวตัวบ่งชี้ =====
                         $title = "[{$ind->code}] {$ind->name}";
-                        $sheet->mergeCells("A{$row}:F{$row}")->setCellValue("A{$row}", $title);
+                        $sheet->mergeCells("A{$row}:I{$row}")->setCellValue("A{$row}", $title);
                         $sheet->getStyle("A{$row}")->getFont()->setBold(true);
                         $row++;
 
@@ -607,8 +947,8 @@ class SarReportController extends Controller
                         $sheet->mergeCells("C{$row}:D{$row}")->setCellValue("C{$row}", 'ผลการดำเนินงาน');
                         $sheet->setCellValue("C" . ($row + 1), 'มี');
                         $sheet->setCellValue("D" . ($row + 1), 'ไม่มี');
-                        $sheet->mergeCells("E{$row}:E" . ($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
-                        $sheet->mergeCells("F{$row}:F" . ($row + 1))->setCellValue("F{$row}", 'เอกสาร/หลักฐาน');
+                        $sheet->mergeCells("E{$row}:H" . ($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
+                        $sheet->mergeCells("I{$row}:I" . ($row + 1))->setCellValue("I{$row}", 'เอกสาร/หลักฐาน');
                         $row += 2;
 
                         // ===== loop criterias =====
@@ -619,17 +959,87 @@ class SarReportController extends Controller
                             $has = (bool)($cri->status ?? false);
                             $sheet->setCellValue("C{$row}", $has ? '✓' : '');
                             $sheet->setCellValue("D{$row}", $has ? '' : '✓');
-                            $detailHtml = $getEvidenceDetailHtml($cri);
-                            $sheet->setCellValue("E{$row}", trim(strip_tags(html_entity_decode((string)$detailHtml))) ?: '-');
+                            $detailHtml = $getCriteriaReportHtml($cri);
+                            $blocks = $this->extractReportBlocksFromHtml($detailHtml);
+                            $reportRow = $row;
+                            $wroteReport = false;
+
+                            if (empty($blocks)) {
+                                $sheet->mergeCells("E{$reportRow}:H{$reportRow}");
+                                $sheet->setCellValue("E{$reportRow}", '-');
+                                $sheet->getStyle("E{$reportRow}")->getAlignment()->setWrapText(true);
+                                $sheet->getStyle("E{$reportRow}")->getFont()->setName('Courier New');
+                                $wroteReport = true;
+                                $reportRow++;
+                            } else {
+                                foreach ($blocks as $block) {
+                                    if (($block['type'] ?? '') === 'text') {
+                                        $sheet->mergeCells("E{$reportRow}:H{$reportRow}");
+                                        $sheet->setCellValue("E{$reportRow}", $block['text'] ?? '');
+                                        $sheet->getStyle("E{$reportRow}")->getAlignment()->setWrapText(true);
+                                        $sheet->getStyle("E{$reportRow}")->getFont()->setName('Courier New');
+                                        $wroteReport = true;
+                                        $reportRow++;
+                                        continue;
+                                    }
+                                    if (($block['type'] ?? '') === 'table') {
+                                        foreach ($block['rows'] ?? [] as $cells) {
+                                            $cells = array_map(function ($c) {
+                                                return trim(preg_replace('/\s+/', ' ', (string) $c));
+                                            }, (array) $cells);
+                                            $sheet->setCellValue("E{$reportRow}", $cells[0] ?? '');
+                                            $sheet->setCellValue("F{$reportRow}", $cells[1] ?? '');
+                                            $sheet->setCellValue("G{$reportRow}", $cells[2] ?? '');
+                                            $sheet->setCellValue("H{$reportRow}", $cells[3] ?? '');
+                                            $sheet->getStyle("E{$reportRow}:H{$reportRow}")->getAlignment()->setWrapText(true);
+                                            $sheet->getStyle("E{$reportRow}:H{$reportRow}")->getFont()->setName('Courier New');
+                                            $wroteReport = true;
+                                            $reportRow++;
+                                        }
+                                        continue;
+                                    }
+                                    if (($block['type'] ?? '') === 'image') {
+                                        $src = (string) ($block['src'] ?? '');
+                                        $path = null;
+                                        if (preg_match('/^data:image\\/(\\w+);base64,(.+)$/', $src, $m)) {
+                                            $ext = strtolower($m[1]);
+                                            $data = base64_decode($m[2]);
+                                            if ($data !== false) {
+                                                $path = $this->storeTempImage($data, $ext);
+                                            }
+                                        } elseif (filter_var($src, FILTER_VALIDATE_URL) || file_exists($src)) {
+                                            $path = $src;
+                                        }
+                                        if ($path) {
+                                            $drawing = new Drawing();
+                                            $drawing->setPath($path);
+                                            $drawing->setHeight(90);
+                                            $drawing->setCoordinates("E{$reportRow}");
+                                            $drawing->setWorksheet($sheet);
+                                            $sheet->getRowDimension($reportRow)->setRowHeight(95);
+                                            $wroteReport = true;
+                                            $reportRow++;
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
 
                             $evList = $cri->evidences->pluck('name')->implode(', ');
-                            $sheet->setCellValue("F{$row}", $evList ?: '-');
-                            $row++;
+                            $sheet->setCellValue("I{$row}", $evList ?: '-');
+                            if (!$wroteReport) {
+                                $sheet->mergeCells("E{$row}:H{$row}");
+                                $sheet->setCellValue("E{$row}", '-');
+                                $sheet->getStyle("E{$row}")->getAlignment()->setWrapText(true);
+                                $sheet->getStyle("E{$row}")->getFont()->setName('Courier New');
+                                $reportRow = $row + 1;
+                            }
+                            $row = max($row + 1, $reportRow);
                         }
 
                         // ===== ตารางเกณฑ์การให้คะแนน =====
                         $sheet->mergeCells("A{$row}:D{$row}")->setCellValue("A{$row}", 'เกณฑ์การให้คะแนน');
-                        $sheet->mergeCells("E{$row}:F{$row}")->setCellValue("E{$row}", 'การประเมินตนเอง');
+                        $sheet->mergeCells("E{$row}:I{$row}")->setCellValue("E{$row}", 'การประเมินตนเอง');
                         $row++;
 
                         $lines = [];
@@ -646,7 +1056,7 @@ class SarReportController extends Controller
                         if (empty($lines)) {
                             $sheet->mergeCells("A{$row}:C{$row}")->setCellValue("A{$row}", '............................');
                             $sheet->setCellValue("D{$row}", '........ คะแนน');
-                            $sheet->mergeCells("E{$row}:F{$row}")->setCellValue("E{$row}", '');
+                            $sheet->mergeCells("E{$row}:I{$row}")->setCellValue("E{$row}", '');
                             $row++;
                         } else {
                             foreach ($lines as $line) {
@@ -666,14 +1076,14 @@ class SarReportController extends Controller
                                 // เขียนแถวลง Excel
                                 $sheet->mergeCells("A{$row}:C{$row}")->setCellValue("A{$row}", $line);
                                 $sheet->setCellValue("D{$row}", $scoreFromLine !== null ? "{$scoreFromLine} คะแนน" : '........ คะแนน');
-                                $sheet->mergeCells("E{$row}:F{$row}")->setCellValue("E{$row}", $match ? '✓' : '');
+                                $sheet->mergeCells("E{$row}:I{$row}")->setCellValue("E{$row}", $match ? '✓' : '');
                                 $row++;
                             }
                         }
 
 
                         // ===== ใส่ border + alignment =====
-                        $sheet->getStyle("A1:F{$row}")->applyFromArray([
+                        $sheet->getStyle("A1:I{$row}")->applyFromArray([
                             'borders' => [
                                 'allBorders' => [
                                     'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
@@ -696,8 +1106,11 @@ class SarReportController extends Controller
             $sheet->getColumnDimension('B')->setWidth(50);
             $sheet->getColumnDimension('C')->setWidth(12);
             $sheet->getColumnDimension('D')->setWidth(12);
-            $sheet->getColumnDimension('E')->setWidth(20);
-            $sheet->getColumnDimension('F')->setWidth(25);
+            $sheet->getColumnDimension('E')->setWidth(18);
+            $sheet->getColumnDimension('F')->setWidth(18);
+            $sheet->getColumnDimension('G')->setWidth(18);
+            $sheet->getColumnDimension('H')->setWidth(18);
+            $sheet->getColumnDimension('I')->setWidth(25);
 
             $writer = new Xlsx($spreadsheet);
             $filename = "sar-report-{$report->year}.xlsx";
@@ -769,7 +1182,7 @@ class SarReportController extends Controller
                             $table->addCell(1500)->addText($cri->status ? '✓' : '-');
 
                             $cell = $table->addCell(2500);
-                            $this->addHtmlSafe($cell, $stripFonts($getEvidenceDetailHtml($cri) ?: '-'));
+                            $this->addHtmlSafe($cell, $stripFonts($getCriteriaReportHtml($cri) ?: '-'));
 
                             $evList = $cri->evidences->pluck('name')->implode(', ');
                             $table->addCell(2000)->addText($this->sanitizeWordText($evList ?: '-'));

@@ -120,8 +120,9 @@
                                 <td>{{ $cri->name }}</td>
                                 <td class="score">{{ $cri->status ? '✓' : '-' }}</td>
                                 @php
-                                    $detailHtml = '';
-                                    if ($cri->relationLoaded('evidences')) {
+                                    // Prefer criteria.report, fallback to evidence detail
+                                    $detailHtml = (string) ($cri->report ?? '');
+                                    if (trim(strip_tags(html_entity_decode($detailHtml))) === '' && $cri->relationLoaded('evidences')) {
                                         foreach ($cri->evidences as $ev) {
                                             $h = (string) ($ev->detail ?? '');
                                             if (trim(strip_tags(html_entity_decode($h))) !== '') { $detailHtml = $h; break; }
