@@ -144,7 +144,7 @@ class EvidenceController extends Controller
             'additional_urls.*' => 'nullable|url|max:2048',
             'url_names'         => 'nullable|array',
             'url_names.*'       => 'nullable|string|max:255',
-            'detail'            => 'nullable|string|max:65535',
+            'detail'            => 'nullable|string|max:16777215',
         ]);
 
 

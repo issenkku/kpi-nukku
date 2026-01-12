@@ -118,7 +118,7 @@
                                 {!! $detailHtml !!}
                             </div>
                             @if (!$locked)
-                                <textarea class="criteria-detail-editor eu-editor" rows="6" style="display:none">{!! $detailHtml !!}</textarea>
+                                <textarea id="detailEditor-{{ $criteria->id }}" class="criteria-detail-editor eu-editor" rows="6" style="display:none">{!! $detailHtml !!}</textarea>
                             @endif
                         </div>
 
@@ -785,6 +785,81 @@
             }
 
             /*** ---------- Trumbowyg Editor ---------- ***/
+            let lastActiveEditor = null;
+            let lastActiveTextarea = null;
+            function insertImageIntoTextarea(textarea, dataUrl) {
+                const html = `<img src="${dataUrl}">`;
+                const start = textarea.selectionStart ?? textarea.value.length;
+                const end = textarea.selectionEnd ?? textarea.value.length;
+                textarea.value = textarea.value.slice(0, start) + html + textarea.value.slice(end);
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                try {
+                    textarea.selectionStart = textarea.selectionEnd = start + html.length;
+                } catch (_) {}
+            }
+
+            function attachPasteImage($editor, textareaEl) {
+                if ($editor && $editor.length) {
+                    const $box = $editor.closest('.trumbowyg-box');
+                    const $ed = $box.find('.trumbowyg-editor');
+                    if ($ed.length) {
+                        $ed.off('focus.pasteImageTracker').on('focus.pasteImageTracker', function() {
+                            lastActiveEditor = $editor;
+                            lastActiveTextarea = null;
+                        });
+                    }
+                    if ($ed.length && !$ed.data('pasteImageBound')) {
+                        $ed.data('pasteImageBound', true);
+                        $ed.on('paste', function(e) {
+                            const evt = e.originalEvent || e;
+                            const items = evt?.clipboardData?.items || [];
+                            for (const item of items) {
+                                if (item.type && item.type.indexOf('image') === 0) {
+                                    e.preventDefault();
+                                    const file = item.getAsFile();
+                                    if (!file) return;
+                                    const reader = new FileReader();
+                                    reader.onload = function(ev) {
+                                        try {
+                                            $editor.trumbowyg('execCmd', {
+                                                cmd: 'insertHTML',
+                                                param: `<img src="${ev.target.result}">`
+                                            });
+                                        } catch (_) {}
+                                    };
+                                    reader.readAsDataURL(file);
+                                    break;
+                                }
+                            }
+                        });
+                    }
+                }
+
+                if (textareaEl && !textareaEl.dataset.pasteImageBound) {
+                    textareaEl.dataset.pasteImageBound = '1';
+                    textareaEl.addEventListener('focus', function() {
+                        lastActiveTextarea = textareaEl;
+                        lastActiveEditor = null;
+                    });
+                    textareaEl.addEventListener('paste', function(e) {
+                        const items = e.clipboardData?.items || [];
+                        for (const item of items) {
+                            if (item.type && item.type.indexOf('image') === 0) {
+                                e.preventDefault();
+                                const file = item.getAsFile();
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onload = function(ev) {
+                                    insertImageIntoTextarea(textareaEl, ev.target.result);
+                                };
+                                reader.readAsDataURL(file);
+                                break;
+                            }
+                        }
+                    });
+                }
+            }
+
             function initTrumbowyg(criteriaId) {
                 if (typeof $ === 'undefined' || typeof $.fn.trumbowyg === 'undefined') return false;
                 if (editorInitialized[criteriaId]) return true;
@@ -825,6 +900,7 @@
                         },
                         autogrow: true
                     });
+                    attachPasteImage($editor, $editor[0]);
                     editorInitialized[criteriaId] = true;
                     return true;
                 } catch (error) {
@@ -911,6 +987,7 @@
                             });
                             // cache wrapper box for show/hide
                             editorBox = section.querySelector('.trumbowyg-box');
+                            attachPasteImage($(editor), editor);
                             trumboReady = true;
                         }
                     } catch (e) {}
@@ -921,6 +998,12 @@
                     if (view) view.style.display = 'none';
                     editor.style.display = '';
                     if (editorBox) editorBox.style.display = '';
+                    try {
+                        const focusEl = editorBox?.querySelector('.trumbowyg-editor') || editor;
+                        focusEl?.focus();
+                    } catch (_) {}
+                    lastActiveEditor = window.$ ? $(editor) : null;
+                    lastActiveTextarea = editor;
                     editBtn.style.display = 'none';
                     if (saveBtn) saveBtn.style.display = '';
                     if (cancelBtn) cancelBtn.style.display = '';
@@ -1007,6 +1090,72 @@
                 });
             });
         });
+    </script>
+    <script>
+        document.addEventListener('paste', function(e) {
+            const items = e.clipboardData?.items || [];
+            let imageItem = null;
+            for (const item of items) {
+                if (item.type && item.type.indexOf('image') === 0) {
+                    imageItem = item;
+                    break;
+                }
+            }
+            if (!imageItem) return;
+
+            const resolveTarget = () => {
+                if (lastActiveEditor && lastActiveEditor.length) return { type: 'trumbowyg', $el: lastActiveEditor };
+                if (lastActiveTextarea) return { type: 'textarea', el: lastActiveTextarea };
+
+                const active = document.activeElement;
+                if (active) {
+                    const editorDiv = active.closest?.('.trumbowyg-editor');
+                    if (editorDiv && window.$) {
+                        const $ta = $(editorDiv).closest('.trumbowyg-box').prev('textarea');
+                        if ($ta.length) return { type: 'trumbowyg', $el: $ta };
+                    }
+                    const textAreaEl = active.closest?.('.criteria-detail-editor');
+                    if (textAreaEl) return { type: 'textarea', el: textAreaEl };
+                }
+
+                const boxes = Array.from(document.querySelectorAll('.criteria-detail .trumbowyg-box'));
+                const visibleBox = boxes.find(b => b.offsetParent !== null);
+                if (visibleBox && window.$) {
+                    const $ta = $(visibleBox).prev('textarea');
+                    if ($ta.length) return { type: 'trumbowyg', $el: $ta };
+                }
+
+                const textareas = Array.from(document.querySelectorAll('.criteria-detail-editor'));
+                const visibleTextarea = textareas.find(t => t.offsetParent !== null);
+                if (visibleTextarea) return { type: 'textarea', el: visibleTextarea };
+
+                return null;
+            };
+
+            const target = resolveTarget();
+            if (!target) return;
+
+            const file = imageItem.getAsFile();
+            if (!file) return;
+
+            e.preventDefault();
+            e.stopImmediatePropagation();
+
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                if (target.type === 'trumbowyg') {
+                    try {
+                        target.$el.trumbowyg('execCmd', {
+                            cmd: 'insertHTML',
+                            param: `<img src="${ev.target.result}">`
+                        });
+                        return;
+                    } catch (_) {}
+                }
+                insertImageIntoTextarea(target.el || target.$el?.[0], ev.target.result);
+            };
+            reader.readAsDataURL(file);
+        }, true);
     </script>
     <script>
         function getCsrfToken() {
@@ -1552,6 +1701,12 @@
         .trumbowyg-textarea {
             font-size: 16px;
             min-height: 160px;
+        }
+
+        .trumbowyg-editor img,
+        .criteria-detail-view img {
+            max-width: none;
+            height: auto;
         }
 
         .trumbowyg-box.trumbowyg-editor-visible .trumbowyg-editor:focus {
