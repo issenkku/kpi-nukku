@@ -734,8 +734,13 @@
                                 body: JSON.stringify({ detail: html })
                             });
                             const text = await resp.text(); let data; try { data = JSON.parse(text); } catch (_) { data = null; }
-                            if (resp.ok && (data?.success !== false)) { if (view) view.innerHTML = html || ''; toViewMode(); }
-                            else { alert((data && data.message) || 'บันทึกไม่สำเร็จ'); }
+                            if (resp.ok && (data?.success !== false)) {
+                                if (view) view.innerHTML = html || '';
+                                toViewMode();
+                                window.showToast?.('success', 'บันทึกสำเร็จ');
+                            } else {
+                                window.showToast?.('error', (data && data.message) || 'บันทึกไม่สำเร็จ');
+                            }
                         } else {
                             const resp = await fetch(storeUrl, {
                                 method: 'POST',
@@ -743,11 +748,15 @@
                                 body: JSON.stringify({ criteria_id: Number(criteriaId), detail: html })
                             });
                             const text = await resp.text(); let data; try { data = JSON.parse(text); } catch (_) { data = null; }
-                            if (resp.ok && (data?.success !== false)) { window.location.reload(); }
-                            else { alert((data && data.message) || 'บันทึกไม่สำเร็จ'); }
+                            if (resp.ok && (data?.success !== false)) {
+                                window.showToast?.('success', 'บันทึกสำเร็จ');
+                                setTimeout(() => window.location.reload(), 800);
+                            } else {
+                                window.showToast?.('error', (data && data.message) || 'บันทึกไม่สำเร็จ');
+                            }
                         }
                     } catch (e) {
-                        alert('เกิดข้อผิดพลาดในการบันทึก');
+                        window.showToast?.('error', 'เกิดข้อผิดพลาดในการบันทึก');
                     } finally {
                         saveBtn.disabled = false; editBtn.disabled = false; if (cancelBtn) cancelBtn.disabled = false;
                     }

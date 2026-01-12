@@ -1,7 +1,7 @@
 {{-- resources/views/components/toasts.blade.php --}}
 @php $errs = $errors->any() ? collect($errors->all()) : collect(); @endphp
 
-<div x-data="{
+<div id="global-toasts" x-data="{
     showSuccess: {{ session()->has('success') ? 'true' : 'false' }},
     showError: {{ session()->has('error') ? 'true' : 'false' }},
     showErrors: {{ $errors->any() ? 'true' : 'false' }},
@@ -142,5 +142,56 @@ hideAfter(8000, 'showErrors');"
                 timer = setTimeout(() => box.style.display = 'none', 2000);
             });
         });
+    })();
+
+    // Programmatic toast (for AJAX actions)
+    (function() {
+        const root = document.getElementById('global-toasts');
+        if (!root) return;
+
+        const toastClass = {
+            success: 'border-emerald-200 bg-emerald-50/90 text-emerald-900',
+            error: 'border-red-200 bg-red-50/90 text-red-900',
+            warn: 'border-amber-200 bg-amber-50/90 text-amber-900',
+        };
+        const iconSvg = {
+            success: '<svg class="h-5 w-5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+            error: '<svg class="h-5 w-5 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M12 5a7 7 0 100 14 7 7 0 000-14z"/></svg>',
+            warn: '<svg class="h-5 w-5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L14.71 3.86a2 2 0 00-3.42 0z"/></svg>',
+        };
+        const titleText = { success: 'สำเร็จ', error: 'เกิดข้อผิดพลาด', warn: 'กรุณาตรวจสอบข้อมูล' };
+
+        window.showToast = function(type, message, duration = 4000) {
+            if (!message) return;
+            const t = toastClass[type] ? type : 'success';
+            const box = document.createElement('div');
+            box.className = `pointer-events-auto relative flex gap-3 items-start rounded-xl border shadow-lg px-4 py-3 backdrop-blur-sm ${toastClass[t]}`;
+            box.setAttribute('role', 'alert');
+            box.dataset.autoclose = String(duration);
+            box.innerHTML = `
+                <div class="shrink-0 mt-0.5">${iconSvg[t]}</div>
+                <div class="min-w-0">
+                    <div class="font-semibold leading-5">${titleText[t]}</div>
+                    <div class="text-sm break-words"></div>
+                </div>
+                <button type="button" class="absolute top-2 right-2 rounded-md p-1" aria-label="ปิดการแจ้งเตือน">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            `;
+            box.querySelector('.text-sm').textContent = message;
+            const closeBtn = box.querySelector('button');
+            closeBtn.addEventListener('click', () => box.remove());
+            root.appendChild(box);
+
+            const ms = parseInt(box.dataset.autoclose, 10) || 4000;
+            let timer = setTimeout(() => box.remove(), ms);
+            box.addEventListener('mouseenter', () => clearTimeout(timer));
+            box.addEventListener('mouseleave', () => {
+                clearTimeout(timer);
+                timer = setTimeout(() => box.remove(), 2000);
+            });
+        };
     })();
 </script>
