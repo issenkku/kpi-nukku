@@ -40,7 +40,7 @@
                                 placeholder="กรอกปีการประเมิน" required />
                             <x-input name="name" label="ชื่อตัวบ่งชี้" placeholder="กรุณากรอกชื่อตัวบ่งชี้" required />
                             <x-input name="code" label="รหัสตัวบ่งชี้" placeholder="เช่น NCS-1" required />
-                            <x-input name="max_score" type="number" step="1" label="คะแนนตัวบ่งชี้"
+                            <x-input name="max_score" type="number" step="0.01" label="คะแนนตัวบ่งชี้"
                                 placeholder="กรุณากรอกคะแนน" required x-model.number="score_acc" />
                             <x-select name="standard_id" :options="$standards ?? []" label="มาตรฐานตัวบ่งชี้"
                                 placeholder="กรุณาเลือกมาตรฐานตัวบ่งชี้" required />

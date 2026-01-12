@@ -316,7 +316,7 @@
                         <label class="variable-label" for="variable-{{ $variable->id }}">
                             {{ $variable->label_name ?? $variable->variable_name }}
                         </label>
-                        <input type="number" id="variable-{{ $variable->id }}" name="variables[{{ $variable->id }}]"
+                        <input type="number" step="0.01" inputmode="decimal" id="variable-{{ $variable->id }}" name="variables[{{ $variable->id }}]"
                             value="{{ old('variables.' . $variable->id, $variable->value) }}"
                             placeholder="กรุณากรอกร้อยละเป็นตัวเลข" class="variable-input" form="variables-form"
                             @if ($locked) readonly @endif>

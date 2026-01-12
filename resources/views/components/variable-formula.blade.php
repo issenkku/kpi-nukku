@@ -91,13 +91,14 @@
         }
 
         const generatedName = this.generateVariableName(this.newType);
+        const formattedValue = this.newType === 'defined' ? this.formatDecimal(this.newValue) : '';
         this.vars = [...this.vars, {
             id: Date.now() + Math.random(),
             dbId: null,
             variable_name: generatedName,
             label_name: label,
             type: this.newType,
-            value: this.newType === 'defined' ? (this.newValue ?? '') : ''
+            value: formattedValue
         }];
 
         this.newName = '';
@@ -166,9 +167,26 @@
                 this.$refs.condition?.focus();
             }
         });
+    },
+    formatDecimal(val) {
+        if (val === null || val === undefined || val === '') return '';
+        const num = Number(val);
+        if (Number.isNaN(num)) return val;
+        return num.toFixed(2);
+    },
+    normalizeDecimals() {
+        if (this.newType === 'defined' && this.newValue !== '') {
+            this.newValue = this.formatDecimal(this.newValue);
+        }
+        this.vars.forEach(v => {
+            if (v.type === 'defined' && v.value !== '' && v.value !== null && v.value !== undefined) {
+                v.value = this.formatDecimal(v.value);
+            }
+        });
     }
 }" x-init="initSubmitGuard();
-initializeVariableNames();" class="space-y-5">
+initializeVariableNames();
+normalizeDecimals();" class="space-y-5">
 
     {{-- ROW: Add Variable (mobile-first, stacks; spreads at md+) --}}
     <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr,minmax(200px,380px),auto] md:items-center">
@@ -223,12 +241,14 @@ initializeVariableNames();" class="space-y-5">
                 <template x-if="newType === 'defined'">
         <input x-model="newValue" aria-label="ค่าตั้งต้น"
                         type="number" 
+                        step="0.01"
                         inputmode="decimal" 
                         id="variable_new_value"
                         name="variable_new_value"
                         placeholder="ค่า"
                         autocomplete="off"
-                        class="p-2 w-full bg-white rounded-xl border border-slate-300 text-sm md:text-base hover:border-blue-400 transition">
+                        class="p-2 w-full bg-white rounded-xl border border-slate-300 text-sm md:text-base hover:border-blue-400 transition"
+                        @blur="newValue = formatDecimal(newValue)">
                 </template>
             </div>
         </div>
@@ -274,13 +294,15 @@ initializeVariableNames();" class="space-y-5">
 
                     <div class="flex-1" x-show="v.type === 'defined'">
                         <label :for="`${prefix}_var_${i}_value_mobile`" class="text-xs font-medium text-slate-700 block mb-1">Value</label>
-        <input x-model.number="v.value" aria-label="ค่า"
+        <input x-model="v.value" aria-label="ค่า"
                             type="number" 
+                            step="0.01"
                             inputmode="decimal"
                             :id="`${prefix}_var_${i}_value_mobile`"
                             :name="`${prefix}_var_${i}_value_display`"
                             autocomplete="off"
-                            class="w-full rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-sm p-2" />
+                            class="w-full rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-sm p-2"
+                            @blur="v.value = formatDecimal(v.value)" />
                     </div>
 
                     <button type="button" @click="remove(i)" 
@@ -338,13 +360,15 @@ initializeVariableNames();" class="space-y-5">
                 <div class="flex flex-col gap-1">
                     <div x-show="v.type === 'defined'" class="flex flex-col gap-1">
                         <label :for="`${prefix}_var_${i}_value_desktop`" class="text-xs font-medium text-slate-700">Value</label>
-        <input x-model.number="v.value" aria-label="ค่า"
+        <input x-model="v.value" aria-label="ค่า"
                             type="number" 
+                            step="0.01"
                             inputmode="decimal"
                             :id="`${prefix}_var_${i}_value_desktop`"
                             :name="`${prefix}_var_${i}_value_display`"
                             autocomplete="off"
-                            class="w-full rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-sm p-2" />
+                            class="w-full rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-sm p-2"
+                            @blur="v.value = formatDecimal(v.value)" />
                     </div>
                     <div x-show="v.type === 'input'" class="flex flex-col gap-1">
                         <div class="text-xs font-medium text-slate-500">Value</div>
