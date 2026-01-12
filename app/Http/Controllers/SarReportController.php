@@ -202,7 +202,11 @@ class SarReportController extends Controller
         $criteria = Criteria::findOrFail($id);
         $reportHtml = $request->input('report');
 
-        // Write to evidence.detail only (no longer storing in criterias.report)
+        // Persist to criterias.report (no evidence auto-create)
+        $criteria->report = $reportHtml;
+        $criteria->save();
+
+        // If a detail evidence already exists, sync it for compatibility
         try {
             $evi = Evidence::where('criteria_id', $criteria->id)
                 ->whereNotNull('detail')
@@ -212,21 +216,9 @@ class SarReportController extends Controller
             if ($evi) {
                 $evi->detail = $reportHtml;
                 $evi->save();
-            } else {
-                if (filled($reportHtml)) {
-                    $evi = new Evidence();
-                    $evi->path        = [];
-                    $evi->detail      = $reportHtml;
-                    $evi->status      = true;
-                    $evi->criteria_id = $criteria->id;
-                    $evi->user_id     = Auth::id();
-                    $evi->name        = 'รายงานผลการดำเนินงาน';
-                    $evi->type        = 'note';
-                    $evi->save();
-                }
             }
         } catch (\Throwable $e) {
-            // Non-fatal: keep criteria.report saved even if evidence sync fails
+            // Non-fatal: report already saved on criteria
         }
 
         return response()->json([

@@ -55,7 +55,14 @@
 
                                             {{-- ตารางเกณฑ์ --}}
                                             <div class="overflow-x-auto">
-                                                <table class="w-full border-collapse text-sm">
+                                                <table class="w-full border-collapse text-sm table-fixed sar-criteria-table">
+                                                    <colgroup>
+                                                        <col style="width: 6%;">
+                                                        <col style="width: 36%;">
+                                                        <col style="width: 8%;">
+                                                        <col style="width: 34%;">
+                                                        <col style="width: 16%;">
+                                                    </colgroup>
                                                     <thead>
                                                         <tr class="bg-gray-200 text-center text-gray-700">
                                                             <th class="border px-2 py-1 w-12">ข้อ</th>
@@ -81,10 +88,18 @@
                                                                     $__detailEv = $cri->evidences
                                                                         ->sortByDesc(function($e){ return $e->created_at; })
                                                                         ->first(function($e){ return filled($e->detail); });
-                                                                    $__initialReport = $__detailEv->detail ?? '';
+                                                                    $__initialReport = $cri->report ?? ($__detailEv->detail ?? '');
                                                                 @endphp
-                                                                <td class="border px-2 text-center cursor-pointer hover:bg-blue-50"
-                                                                    x-data="{ open: false, text: @js($__initialReport), saving: false, saved: false, showPreview: false }" @click="open = true"
+                                                                <td class="border px-2 text-center cursor-pointer hover:bg-blue-50 report-cell"
+                                                                    x-data="{
+                                                                        open: false,
+                                                                        text: @js($__initialReport),
+                                                                        saving: false,
+                                                                        saved: false,
+                                                                        showPreview: false,
+                                                                        expanded: false,
+                                                                        plainText() { return (this.text || '').replace(/<[^>]*>/g,'').trim(); }
+                                                                    }" @click="open = true"
                                                                     tabindex="0" role="button"
                                                                     @keydown.enter.prevent="open = true"
                                                                     @keydown.space.prevent="open = true"
@@ -160,8 +175,14 @@
                                                                     <template
                                                                         x-if="text && text.replace(/<[^>]*>/g,'').trim().length">
                                                                         <div class="mt-2 text-left">
-                                                                            <div class="rte-preview border rounded bg-gray-50 p-2 max-h-28 overflow-auto"
+                                                                            <div class="rte-preview border rounded bg-gray-50 p-2 report-preview"
+                                                                                :class="expanded ? 'is-expanded' : ''"
                                                                                 x-html="text"></div>
+                                                                            <button type="button"
+                                                                                class="text-xs text-blue-600 mt-1 hover:underline"
+                                                                                x-show="plainText().length > 160"
+                                                                                @click.stop="expanded = !expanded"
+                                                                                x-text="expanded ? 'ย่อ' : 'อ่านเพิ่มเติม'"></button>
                                                                             <div class="text-[10px] text-gray-500 mt-1">
                                                                                 ตัวอย่าง
                                                                             </div>
@@ -512,6 +533,52 @@
 
         .rte-preview li {
             display: list-item !important;
+        }
+
+        .report-preview {
+            max-height: 120px;
+            overflow: hidden;
+            word-break: break-word;
+            max-width: 100%;
+        }
+
+        .report-preview.is-expanded {
+            max-height: none;
+        }
+
+        .sar-criteria-table th,
+        .sar-criteria-table td {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            vertical-align: top;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .sar-criteria-table {
+            width: 100%;
+            table-layout: fixed;
+        }
+
+        .report-preview table {
+            width: 100% !important;
+            table-layout: fixed;
+        }
+
+        .report-preview th,
+        .report-preview td {
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .report-cell {
+            max-width: 100%;
+            overflow: hidden;
+        }
+
+        .report-cell .report-preview,
+        .report-cell .report-preview * {
+            max-width: 100%;
         }
     </style>
 @endpush
