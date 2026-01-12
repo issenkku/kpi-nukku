@@ -194,7 +194,7 @@
                                                                     <div x-show="open"
                                                                         class="fixed inset-0 flex items-center justify-center bg-black/50 z-50"
                                                                         x-cloak @click.self="open = false">
-                                                                        <div class="bg-white w-full max-w-2xl rounded-lg shadow-lg p-6"
+                                                                        <div class="bg-white w-full max-w-2xl rounded-lg shadow-lg p-6 max-h-[85vh] overflow-y-auto"
                                                                             @click.stop>
                                                                             <!-- ✅ กันไม่ให้คลิกด้านในส่งต่อไปข้างนอก -->
                                                                             <h3 class="text-lg font-semibold mb-4">
@@ -202,7 +202,7 @@
                                                                             </h3>
 
                                                                             <!-- Rich Text Editor -->
-                                                                            <textarea id="editor-{{ $cri->id }}" x-ref="editor">{!! $__initialReport !!}</textarea>
+                                                                            <textarea id="editor-{{ $cri->id }}" x-ref="editor" class="max-w-full">{!! $__initialReport !!}</textarea>
 
                                                                             <div class="mt-4 flex justify-end space-x-2">
                                                                                 <button type="button"
@@ -579,6 +579,16 @@
         .report-cell .report-preview,
         .report-cell .report-preview * {
             max-width: 100%;
+        }
+
+        .trumbowyg-editor img,
+        .trumbowyg-editor table {
+            max-width: 100%;
+        }
+
+        .trumbowyg-editor table {
+            display: block;
+            overflow-x: auto;
         }
     </style>
 @endpush
