@@ -109,7 +109,8 @@
                         <div class="criteria-detail mb-3"
                              data-criteria-id="{{ $criteria->id }}"
                              data-evidence-id="{{ $detailId }}"
-                             data-store-url="{{ route('evidences.store') }}">
+                             data-store-url="{{ route('evidences.store') }}"
+                             @if($detailId) data-update-url="{{ route('evidences.update', $detailId) }}" @endif>
                             <div class="flex items-center justify-between mb-1">
                                 <div class="font-semibold text-gray-800">รายงานผลการดำเนินงาน</div>
                                 @if (!$locked)
@@ -124,7 +125,7 @@
                                 {!! $detailHtml !!}
                             </div>
                             @if (!$locked)
-                                <textarea class="criteria-detail-editor eu-editor" rows="6" style="display:none">{!! $detailHtml !!}</textarea>
+                                <textarea id="detailEditor-{{ $criteria->id }}" class="criteria-detail-editor eu-editor" rows="6" style="display:none">{!! $detailHtml !!}</textarea>
                             @endif
                         </div>
 
@@ -445,6 +446,115 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/fontsize/trumbowyg.fontsize.min.js">
     </script>
     <script>
+        let lastActiveEditor = null;
+        let lastActiveTextarea = null;
+
+        function insertImageIntoTextarea(textarea, dataUrl) {
+            const html = `<img src="${dataUrl}">`;
+            const start = textarea.selectionStart ?? textarea.value.length;
+            const end = textarea.selectionEnd ?? textarea.value.length;
+            textarea.value = textarea.value.slice(0, start) + html + textarea.value.slice(end);
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            try {
+                textarea.selectionStart = textarea.selectionEnd = start + html.length;
+            } catch (_) {}
+        }
+
+        function attachPasteImage($editor, textareaEl) {
+            if ($editor && $editor.length) {
+                const $box = $editor.closest('.trumbowyg-box');
+                const $ed = $box.find('.trumbowyg-editor');
+                if ($ed.length) {
+                    $ed.off('focus.pasteImageTracker').on('focus.pasteImageTracker', function() {
+                        lastActiveEditor = $editor;
+                        lastActiveTextarea = null;
+                    });
+                }
+                if ($ed.length && !$ed.data('pasteImageBound')) {
+                    $ed.data('pasteImageBound', true);
+                    $ed.on('paste', function(e) {
+                        const evt = e.originalEvent || e;
+                        const items = evt?.clipboardData?.items || [];
+                        for (const item of items) {
+                            if (item.type && item.type.indexOf('image') === 0) {
+                                e.preventDefault();
+                                const file = item.getAsFile();
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onload = function(ev) {
+                                    try {
+                                        $editor.trumbowyg('execCmd', {
+                                            cmd: 'insertHTML',
+                                            param: `<img src="${ev.target.result}">`
+                                        });
+                                    } catch (_) {}
+                                };
+                                reader.readAsDataURL(file);
+                                break;
+                            }
+                        }
+                    });
+                    $ed.on('dragover drop', function(e) {
+                        e.preventDefault();
+                    });
+                    $ed.on('drop', function(e) {
+                        const evt = e.originalEvent || e;
+                        const files = Array.from(evt?.dataTransfer?.files || []);
+                        const imageFile = files.find(f => f.type && f.type.indexOf('image') === 0);
+                        if (!imageFile) return;
+                        const reader = new FileReader();
+                        reader.onload = function(ev) {
+                            try {
+                                $editor.trumbowyg('execCmd', {
+                                    cmd: 'insertHTML',
+                                    param: `<img src="${ev.target.result}">`
+                                });
+                            } catch (_) {}
+                        };
+                        reader.readAsDataURL(imageFile);
+                    });
+                }
+            }
+
+            if (textareaEl && !textareaEl.dataset.pasteImageBound) {
+                textareaEl.dataset.pasteImageBound = '1';
+                textareaEl.addEventListener('focus', function() {
+                    lastActiveTextarea = textareaEl;
+                    lastActiveEditor = null;
+                });
+                textareaEl.addEventListener('paste', function(e) {
+                    const items = e.clipboardData?.items || [];
+                    for (const item of items) {
+                        if (item.type && item.type.indexOf('image') === 0) {
+                            e.preventDefault();
+                            const file = item.getAsFile();
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = function(ev) {
+                                insertImageIntoTextarea(textareaEl, ev.target.result);
+                            };
+                            reader.readAsDataURL(file);
+                            break;
+                        }
+                    }
+                });
+                textareaEl.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                });
+                textareaEl.addEventListener('drop', function(e) {
+                    const files = Array.from(e.dataTransfer?.files || []);
+                    const imageFile = files.find(f => f.type && f.type.indexOf('image') === 0);
+                    if (!imageFile) return;
+                    e.preventDefault();
+                    const reader = new FileReader();
+                    reader.onload = function(ev) {
+                        insertImageIntoTextarea(textareaEl, ev.target.result);
+                    };
+                    reader.readAsDataURL(imageFile);
+                });
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', function () {
             const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
@@ -468,7 +578,7 @@
                 } catch (e) {}
 
                 const ensureEditor = () => {
-                    if (trumboReady) return;
+                    if (trumboReady) return true;
                     try {
                         if (window.$ && typeof $.fn.trumbowyg === 'function') {
                             $(editor).trumbowyg({
@@ -481,17 +591,38 @@
                                     ['justifyLeft','justifyCenter','justifyRight','justifyFull'], ['horizontalRule'], ['removeformat']
                                 ]
                             });
-                            editorBox = section.querySelector('.trumbowyg-box');
+                            editorBox = section.querySelector('.trumbowyg-box') || $(editor).next('.trumbowyg-box')[0] || null;
+                            attachPasteImage($(editor), editor);
                             trumboReady = true;
+                            return true;
                         }
                     } catch (e) {}
+                    return false;
                 };
 
                 const toEditMode = () => {
-                    ensureEditor();
+                    const ready = ensureEditor();
                     if (view) view.style.display = 'none';
-                    editor.style.display = '';
-                    if (editorBox) editorBox.style.display = '';
+                    editorBox = editorBox || section.querySelector('.trumbowyg-box') || (window.$ ? $(editor).next('.trumbowyg-box')[0] : null);
+                    if (ready && editorBox) {
+                        editor.style.display = 'none';
+                        editorBox.style.display = '';
+                        editorBox.style.visibility = 'visible';
+                        editorBox.style.opacity = '1';
+                        try {
+                            const focusEl = editorBox.querySelector('.trumbowyg-editor');
+                            focusEl?.setAttribute('contenteditable', 'true');
+                            focusEl?.focus();
+                        } catch (_) {}
+                    } else {
+                        editor.style.display = '';
+                        if (editorBox) editorBox.style.display = 'none';
+                        try {
+                            editor.focus();
+                        } catch (_) {}
+                    }
+                    lastActiveEditor = window.$ ? $(editor) : null;
+                    lastActiveTextarea = editor;
                     editBtn.style.display = 'none';
                     if (saveBtn) saveBtn.style.display = '';
                     if (cancelBtn) cancelBtn.style.display = '';
@@ -606,6 +737,116 @@
                 });
             });
         });
+    </script>
+    <script>
+        document.addEventListener('paste', function(e) {
+            const items = e.clipboardData?.items || [];
+            let imageItem = null;
+            for (const item of items) {
+                if (item.type && item.type.indexOf('image') === 0) {
+                    imageItem = item;
+                    break;
+                }
+            }
+            if (!imageItem) return;
+
+            const resolveTarget = () => {
+                if (lastActiveEditor && lastActiveEditor.length) return { type: 'trumbowyg', $el: lastActiveEditor };
+                if (lastActiveTextarea) return { type: 'textarea', el: lastActiveTextarea };
+
+                const active = document.activeElement;
+                if (active) {
+                    const editorDiv = active.closest?.('.trumbowyg-editor');
+                    if (editorDiv && window.$) {
+                        const $ta = $(editorDiv).closest('.trumbowyg-box').prev('textarea');
+                        if ($ta.length) return { type: 'trumbowyg', $el: $ta };
+                    }
+                    const textAreaEl = active.closest?.('.criteria-detail-editor');
+                    if (textAreaEl) return { type: 'textarea', el: textAreaEl };
+                }
+
+                const boxes = Array.from(document.querySelectorAll('.criteria-detail .trumbowyg-box'));
+                const visibleBox = boxes.find(b => b.offsetParent !== null);
+                if (visibleBox && window.$) {
+                    const $ta = $(visibleBox).prev('textarea');
+                    if ($ta.length) return { type: 'trumbowyg', $el: $ta };
+                }
+
+                const textareas = Array.from(document.querySelectorAll('.criteria-detail-editor'));
+                const visibleTextarea = textareas.find(t => t.offsetParent !== null);
+                if (visibleTextarea) return { type: 'textarea', el: visibleTextarea };
+
+                return null;
+            };
+
+            const target = resolveTarget();
+            if (!target) return;
+
+            const file = imageItem.getAsFile();
+            if (!file) return;
+
+            e.preventDefault();
+            e.stopImmediatePropagation();
+
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                if (target.type === 'trumbowyg') {
+                    try {
+                        target.$el.trumbowyg('execCmd', {
+                            cmd: 'insertHTML',
+                            param: `<img src="${ev.target.result}">`
+                        });
+                        return;
+                    } catch (_) {}
+                }
+                insertImageIntoTextarea(target.el || target.$el?.[0], ev.target.result);
+            };
+            reader.readAsDataURL(file);
+        }, true);
+    </script>
+    <script>
+        document.addEventListener('dragover', function(e) {
+            const hasFiles = e.dataTransfer && Array.from(e.dataTransfer.items || []).some(i => i.kind === 'file');
+            if (hasFiles) e.preventDefault();
+        }, true);
+        document.addEventListener('drop', function(e) {
+            const files = Array.from(e.dataTransfer?.files || []);
+            const imageFile = files.find(f => f.type && f.type.indexOf('image') === 0);
+            if (!imageFile) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+
+            const target = (() => {
+                if (lastActiveEditor && lastActiveEditor.length) return { type: 'trumbowyg', $el: lastActiveEditor };
+                if (lastActiveTextarea) return { type: 'textarea', el: lastActiveTextarea };
+                const boxes = Array.from(document.querySelectorAll('.criteria-detail .trumbowyg-box'));
+                const visibleBox = boxes.find(b => b.offsetParent !== null);
+                if (visibleBox && window.$) {
+                    const $ta = $(visibleBox).prev('textarea');
+                    if ($ta.length) return { type: 'trumbowyg', $el: $ta };
+                }
+                const textareas = Array.from(document.querySelectorAll('.criteria-detail-editor'));
+                const visibleTextarea = textareas.find(t => t.offsetParent !== null);
+                if (visibleTextarea) return { type: 'textarea', el: visibleTextarea };
+                return null;
+            })();
+
+            if (!target) return;
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                if (target.type === 'trumbowyg') {
+                    try {
+                        target.$el.trumbowyg('execCmd', {
+                            cmd: 'insertHTML',
+                            param: `<img src="${ev.target.result}">`
+                        });
+                        return;
+                    } catch (_) {}
+                }
+                insertImageIntoTextarea(target.el || target.$el?.[0], ev.target.result);
+            };
+            reader.readAsDataURL(imageFile);
+        }, true);
     </script>
 
     <script>
@@ -868,6 +1109,7 @@
                         },
                         autogrow: true
                     });
+                    attachPasteImage($editor, $editor[0]);
                     editorInitialized[criteriaId] = true;
                     return true;
                 } catch (error) {
@@ -1517,6 +1759,12 @@
         .trumbowyg-textarea {
             font-size: 16px;
             min-height: 160px;
+        }
+
+        .trumbowyg-editor img,
+        .criteria-detail-view img {
+            max-width: none;
+            height: auto;
         }
 
         .trumbowyg-box.trumbowyg-editor-visible .trumbowyg-editor:focus {

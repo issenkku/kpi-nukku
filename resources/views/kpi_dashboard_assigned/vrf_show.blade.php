@@ -832,6 +832,25 @@
                                 }
                             }
                         });
+                        $ed.on('dragover drop', function(e) {
+                            e.preventDefault();
+                        });
+                        $ed.on('drop', function(e) {
+                            const evt = e.originalEvent || e;
+                            const files = Array.from(evt?.dataTransfer?.files || []);
+                            const imageFile = files.find(f => f.type && f.type.indexOf('image') === 0);
+                            if (!imageFile) return;
+                            const reader = new FileReader();
+                            reader.onload = function(ev) {
+                                try {
+                                    $editor.trumbowyg('execCmd', {
+                                        cmd: 'insertHTML',
+                                        param: `<img src="${ev.target.result}">`
+                                    });
+                                } catch (_) {}
+                            };
+                            reader.readAsDataURL(imageFile);
+                        });
                     }
                 }
 
@@ -856,6 +875,20 @@
                                 break;
                             }
                         }
+                    });
+                    textareaEl.addEventListener('dragover', function(e) {
+                        e.preventDefault();
+                    });
+                    textareaEl.addEventListener('drop', function(e) {
+                        const files = Array.from(e.dataTransfer?.files || []);
+                        const imageFile = files.find(f => f.type && f.type.indexOf('image') === 0);
+                        if (!imageFile) return;
+                        e.preventDefault();
+                        const reader = new FileReader();
+                        reader.onload = function(ev) {
+                            insertImageIntoTextarea(textareaEl, ev.target.result);
+                        };
+                        reader.readAsDataURL(imageFile);
                     });
                 }
             }
@@ -1155,6 +1188,50 @@
                 insertImageIntoTextarea(target.el || target.$el?.[0], ev.target.result);
             };
             reader.readAsDataURL(file);
+        }, true);
+    </script>
+    <script>
+        document.addEventListener('dragover', function(e) {
+            const hasFiles = e.dataTransfer && Array.from(e.dataTransfer.items || []).some(i => i.kind === 'file');
+            if (hasFiles) e.preventDefault();
+        }, true);
+        document.addEventListener('drop', function(e) {
+            const files = Array.from(e.dataTransfer?.files || []);
+            const imageFile = files.find(f => f.type && f.type.indexOf('image') === 0);
+            if (!imageFile) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+
+            const target = (() => {
+                if (lastActiveEditor && lastActiveEditor.length) return { type: 'trumbowyg', $el: lastActiveEditor };
+                if (lastActiveTextarea) return { type: 'textarea', el: lastActiveTextarea };
+                const boxes = Array.from(document.querySelectorAll('.criteria-detail .trumbowyg-box'));
+                const visibleBox = boxes.find(b => b.offsetParent !== null);
+                if (visibleBox && window.$) {
+                    const $ta = $(visibleBox).prev('textarea');
+                    if ($ta.length) return { type: 'trumbowyg', $el: $ta };
+                }
+                const textareas = Array.from(document.querySelectorAll('.criteria-detail-editor'));
+                const visibleTextarea = textareas.find(t => t.offsetParent !== null);
+                if (visibleTextarea) return { type: 'textarea', el: visibleTextarea };
+                return null;
+            })();
+
+            if (!target) return;
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                if (target.type === 'trumbowyg') {
+                    try {
+                        target.$el.trumbowyg('execCmd', {
+                            cmd: 'insertHTML',
+                            param: `<img src="${ev.target.result}">`
+                        });
+                        return;
+                    } catch (_) {}
+                }
+                insertImageIntoTextarea(target.el || target.$el?.[0], ev.target.result);
+            };
+            reader.readAsDataURL(imageFile);
         }, true);
     </script>
     <script>
