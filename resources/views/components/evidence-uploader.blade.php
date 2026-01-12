@@ -45,7 +45,7 @@
                         <!-- Upload -->
                         <div class="eu-block">
                             <div class="eu-section-title">รายงานผลการดำเนินงาน</div>
-                            <textarea id="detailEditor-{{ $cid }}" name="detail" class="eu-editor" rows="6" aria-label="รายละเอียดหลักฐาน">{!! old('detail') !!}</textarea>
+                            <textarea id="detailEditor-{{ $cid }}" name="detail" class="eu-editor" rows="6" aria-label="รายละเอียดหลักฐาน">{!! old('detail', data_get($criteria, 'report') ?? data_get($criteria, 'detail') ?? '') !!}</textarea>
                         </div>
                         <div class="eu-block">
                             <div class="eu-dropzone" :class="{ 'is-dragover': dragging }"
