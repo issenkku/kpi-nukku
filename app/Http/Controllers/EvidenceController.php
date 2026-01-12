@@ -137,7 +137,7 @@ class EvidenceController extends Controller
 
         $request->validate([
             'criteria_id'       => 'required|integer|exists:criterias,id',
-            'files.*'           => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:10240',
+            'files.*'           => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx',
             'file_names'        => 'nullable|array',
             'file_names.*'      => 'nullable|string|max:255',
             'additional_urls'   => 'nullable|array',
@@ -426,7 +426,7 @@ class EvidenceController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
-            'file' => 'sometimes|file|max:10240', // 10MB max
+            'file' => 'sometimes|file',
             'type' => 'sometimes|required|string|max:100',
             'detail' => 'nullable|string',
             'status' => 'boolean',

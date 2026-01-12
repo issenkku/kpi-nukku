@@ -576,7 +576,15 @@
                     const accept = ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx'];
                     for (const f of list) {
                         const ext = (f.name.split('.').pop() || '').toLowerCase();
-                        if (!accept.includes(ext)) continue;
+                        if (!accept.includes(ext)) {
+                            const message = `ไฟล์ ${f.name} ไม่รองรับ (รองรับเฉพาะ .pdf, .jpg, .jpeg, .png, .doc, .docx)`;
+                            if (typeof window.showToast === 'function') {
+                                window.showToast('error', message);
+                            } else {
+                                alert(message);
+                            }
+                            continue;
+                        }
 
                         f._id = this.uuid();
                         f._isImage = ['jpg', 'jpeg', 'png'].includes(ext);
