@@ -15,10 +15,12 @@ use Maatwebsite\Excel\Concerns\WithColumnFormatting;
 use Maatwebsite\Excel\Concerns\WithEvents;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use Maatwebsite\Excel\Events\AfterSheet;
+use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 
 class IndicatorsExport implements FromCollection, WithEvents
 {
     private $filters;
+    private array $tempImageFiles = [];
 
     public function __construct(array $filters = [])
     {
@@ -106,8 +108,172 @@ class IndicatorsExport implements FromCollection, WithEvents
                 $q->whereRaw('LOWER(indicators.code) = ?', [$code]);
             }
         }
+        $q->orderBy('standards.name')
+            ->orderByRaw("
+                CASE
+                    WHEN indicators.code LIKE 'NCS-%' THEN 1
+                    WHEN indicators.code LIKE 'NCP-%' THEN 2
+                    WHEN indicators.code LIKE 'NCO-%' THEN 3
+                    ELSE 99
+                END
+            ")
+            ->orderByRaw("COALESCE(NULLIF(SPLIT_PART(indicators.code, '-', 2), ''), '0')::int ASC")
+            ->orderBy('indicators.code', 'asc');
+
         // dd($this->filters, $q->toSql(), $q->getBindings());
         return $q->get()->groupBy('standard_name');
+    }
+
+    private function getCriteriaReportHtml($criteria): string
+    {
+        $html = (string) ($criteria->report ?? '');
+        if (trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8'))) !== '') {
+            return $html;
+        }
+        try {
+            if ($criteria && $criteria->relationLoaded('evidences')) {
+                foreach ($criteria->evidences as $ev) {
+                    $html = (string) ($ev->detail ?? '');
+                    if (trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8'))) !== '') {
+                        return $html;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+        return '';
+    }
+
+    private function extractReportBlocksFromHtml(string $html): array
+    {
+        $html = (string) ($html ?? '');
+        if (trim($html) === '') {
+            return [];
+        }
+
+        $doc = new \DOMDocument('1.0', 'UTF-8');
+        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $body = $doc->getElementsByTagName('body')->item(0);
+        if (!$body) {
+            $text = trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
+            return $text !== '' ? [['type' => 'text', 'text' => $text]] : [];
+        }
+
+        $blocks = [];
+        $currentText = '';
+        $flushText = function () use (&$blocks, &$currentText) {
+            $text = trim(preg_replace('/\s+/', ' ', $currentText));
+            if ($text !== '') {
+                $blocks[] = ['type' => 'text', 'text' => $text];
+            }
+            $currentText = '';
+        };
+
+        $walk = function ($node) use (&$walk, &$blocks, &$currentText, $flushText) {
+            if (!$node) return;
+            if ($node->nodeType === XML_TEXT_NODE) {
+                $currentText .= ' ' . $node->textContent;
+                return;
+            }
+            if ($node->nodeType !== XML_ELEMENT_NODE) {
+                return;
+            }
+
+            $tag = strtolower($node->nodeName);
+            if ($tag === 'img') {
+                $flushText();
+                $src = $node->getAttribute('src');
+                if ($src !== '') {
+                    $blocks[] = ['type' => 'image', 'src' => $src];
+                }
+                return;
+            }
+            if ($tag === 'table') {
+                $flushText();
+                $rows = [];
+                foreach ($node->getElementsByTagName('tr') as $tr) {
+                    $cells = [];
+                    foreach ($tr->childNodes as $cell) {
+                        if ($cell->nodeType !== XML_ELEMENT_NODE) {
+                            continue;
+                        }
+                        $cellTag = strtolower($cell->nodeName);
+                        if ($cellTag !== 'td' && $cellTag !== 'th') {
+                            continue;
+                        }
+                        $cells[] = trim(strip_tags($cell->textContent ?? ''));
+                    }
+                    if (!empty($cells)) {
+                        $rows[] = $cells;
+                    }
+                }
+                if (!empty($rows)) {
+                    $blocks[] = ['type' => 'table', 'rows' => $rows];
+                }
+                return;
+            }
+
+            $isBlock = in_array($tag, ['p', 'div', 'li'], true);
+            foreach ($node->childNodes as $child) {
+                $walk($child);
+            }
+            if ($tag === 'br' || $isBlock) {
+                $currentText .= "\n";
+            }
+        };
+
+        foreach ($body->childNodes as $child) {
+            $walk($child);
+        }
+        $flushText();
+
+        return $blocks;
+    }
+
+    private function storeTempImage(string $data, string $ext): ?string
+    {
+        $ext = preg_replace('/[^a-z0-9]+/i', '', strtolower($ext)) ?: 'png';
+        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('export_img_', true) . '.' . $ext;
+        if (@file_put_contents($tmp, $data) === false) {
+            return null;
+        }
+        $this->tempImageFiles[] = $tmp;
+        return $tmp;
+    }
+
+    private function resolveImagePath(string $src): ?string
+    {
+        $src = trim($src);
+        if ($src === '') return null;
+
+        if (preg_match('/^data:image\\/(\\w+);base64,(.+)$/', $src, $m)) {
+            $ext = strtolower($m[1]);
+            $data = base64_decode($m[2]);
+            if ($data === false) return null;
+            return $this->storeTempImage($data, $ext);
+        }
+
+        if (file_exists($src)) {
+            return $src;
+        }
+
+        if (filter_var($src, FILTER_VALIDATE_URL)) {
+            $data = @file_get_contents($src);
+            if ($data === false) return null;
+            return $this->storeTempImage($data, 'png');
+        }
+
+        return null;
+    }
+
+    public function __destruct()
+    {
+        foreach ($this->tempImageFiles as $path) {
+            if (is_string($path) && file_exists($path)) {
+                @unlink($path);
+            }
+        }
     }
 
 
@@ -134,7 +300,7 @@ class IndicatorsExport implements FromCollection, WithEvents
 
                 foreach ($standards as $stdName => $cats) {
                     // ===== หัวมาตรฐาน =====
-                    $s->mergeCells("A{$row}:F{$row}")
+                    $s->mergeCells("A{$row}:I{$row}")
                         ->setCellValue("A{$row}", "มาตรฐาน: {$stdName}");
                     $s->getStyle("A{$row}")->getFont()->setBold(true);
                     $row++;
@@ -144,7 +310,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                         $inds = $cats->where('category_name', $catName);
 
                         // หัวด้าน
-                        $s->mergeCells("A{$row}:F{$row}")
+                        $s->mergeCells("A{$row}:I{$row}")
                             ->setCellValue("A{$row}", "ด้าน: {$catName}");
                         $row++;
 
@@ -173,21 +339,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                             ])->whereIn('id', $ids)->get()->keyBy('id');
 
                             // helper: extract plain text from evidence.detail for a criteria
-                            $extractDetail = function ($criteria) {
-                                try {
-                                    if ($criteria && $criteria->relationLoaded('evidences')) {
-                                        foreach ($criteria->evidences as $ev) {
-                                            $html = (string) ($ev->detail ?? '');
-                                            $htmlTrim = trim(strip_tags(html_entity_decode($html)));
-                                            if ($htmlTrim !== '') {
-                                                $text = preg_replace('/[\x{00A0}\s]+/u', ' ', $htmlTrim);
-                                                return trim((string) $text);
-                                            }
-                                        }
-                                    }
-                                } catch (\Throwable $e) {}
-                                return '';
-                            };
+                            // report html prefers criterias.report, fallback to evidence.detail
 
                             // แล้วค่อย filter ตอนใช้งาน
 
@@ -196,7 +348,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                             foreach ($inds as $ind) {
                                 // ===== หัวตัวชี้วัด =====
                                 $title = trim(($ind->code ? "[{$ind->code}] " : '') . ($ind->name ?? ''));
-                                $s->mergeCells("A{$row}:F{$row}")->setCellValue("A{$row}", $title);
+                                $s->mergeCells("A{$row}:I{$row}")->setCellValue("A{$row}", $title);
                                 $s->getStyle("A{$row}")->getFont()->setBold(true);
                                 $row++;
 
@@ -206,8 +358,8 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 $s->mergeCells("C{$row}:D{$row}")->setCellValue("C{$row}", 'ผลการดำเนินงาน');
                                 $s->setCellValue("C" . ($row + 1), 'มี');
                                 $s->setCellValue("D" . ($row + 1), 'ไม่มี');
-                                $s->mergeCells("E{$row}:E" . ($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
-                                $s->mergeCells("F{$row}:F" . ($row + 1))->setCellValue("F{$row}", 'เอกสาร/หลักฐาน');
+                                $s->mergeCells("E{$row}:H" . ($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
+                                $s->mergeCells("I{$row}:I" . ($row + 1))->setCellValue("I{$row}", 'เอกสาร/หลักฐาน');
                                 $row += 2;
 
                                 // ===== แสดงรายการเกณฑ์ (Criteria) ของตัวชี้วัดนี้ =====
@@ -216,7 +368,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 $ci = 1;
                                 if ($criterias->isEmpty()) {
                                     $s->setCellValue("A{$row}", '-');
-                                    $s->mergeCells("B{$row}:F{$row}")->setCellValue("B{$row}", 'ไม่มีข้อมูล');
+                                    $s->mergeCells("B{$row}:I{$row}")->setCellValue("B{$row}", 'ไม่มีข้อมูล');
                                     $row++;
                                 }
 
@@ -229,48 +381,83 @@ class IndicatorsExport implements FromCollection, WithEvents
                                     $has = (bool) ($c->status ?? false);
                                     $s->setCellValue("C{$row}", $has ? '✓' : '');
                                     $s->setCellValue("D{$row}", $has ? '' : '✓');
-                                    // Column E: รายงานผลการดำเนินงาน (จาก evidence.detail)
-                                    $detailText = $extractDetail($c);
-                                    $s->setCellValue("E{$row}", $detailText);
+                                    $detailHtml = $this->getCriteriaReportHtml($c);
+                                    $blocks = $this->extractReportBlocksFromHtml($detailHtml);
+                                    $reportRow = $row;
+                                    $wroteReport = false;
 
-                                    // --- ถ้ามี evidences ---
-                                    if ($has && $c->evidences->isNotEmpty()) {
-                                        $first = true;
-                                        foreach ($c->evidences as $ev) {
-                                            if (!$first) {
-                                                $row++;
-                                                // ✅ merge A–E ให้ต่อเนื่องเหมือน criteria เดิม
-                                                $s->mergeCells("A{$row}:E{$row}");
-                                            }
-
-                                            $s->setCellValue("F{$row}", $ev->name ?: 'Evidence');
-                                            try {
-                                                $url = route('evidences.download', ['id' => $ev->id]);
-                                                $s->getCell("F{$row}")->getHyperlink()->setUrl($url);
-                                                $s->getStyle("F{$row}")->getFont()->getColor()->setARGB('FF0000FF');
-                                                $s->getStyle("F{$row}")->getFont()->setUnderline(true);
-                                            } catch (\Throwable $ex) {
-                                            }
-
-                                            $first = false;
-                                        }
+                                    if (empty($blocks)) {
+                                        $s->mergeCells("E{$reportRow}:H{$reportRow}");
+                                        $s->setCellValue("E{$reportRow}", '-');
+                                        $s->getStyle("E{$reportRow}")->getAlignment()->setWrapText(true);
+                                        $wroteReport = true;
+                                        $reportRow++;
                                     } else {
-                                        // --- ถ้าไม่มี evidences หรือยังไม่อนุมัติ ---
-                                        $s->setCellValue("F{$row}", '-');
+                                        foreach ($blocks as $block) {
+                                            $type = $block['type'] ?? '';
+                                            if ($type === 'text') {
+                                                $s->mergeCells("E{$reportRow}:H{$reportRow}");
+                                                $s->setCellValue("E{$reportRow}", (string)($block['text'] ?? ''));
+                                                $s->getStyle("E{$reportRow}")->getAlignment()->setWrapText(true);
+                                                $wroteReport = true;
+                                                $reportRow++;
+                                                continue;
+                                            }
+                                            if ($type === 'table') {
+                                                foreach ($block['rows'] ?? [] as $cells) {
+                                                    $cells = array_map(function ($c) {
+                                                        return trim(preg_replace('/\s+/', ' ', (string) $c));
+                                                    }, (array) $cells);
+                                                    $s->setCellValue("E{$reportRow}", $cells[0] ?? '');
+                                                    $s->setCellValue("F{$reportRow}", $cells[1] ?? '');
+                                                    $s->setCellValue("G{$reportRow}", $cells[2] ?? '');
+                                                    $s->setCellValue("H{$reportRow}", $cells[3] ?? '');
+                                                    if (count($cells) > 4) {
+                                                        $extra = implode(' ', array_slice($cells, 4));
+                                                        $s->setCellValue("H{$reportRow}", trim(($cells[3] ?? '') . ' ' . $extra));
+                                                    }
+                                                    $s->getStyle("E{$reportRow}:H{$reportRow}")->getAlignment()->setWrapText(true);
+                                                    $wroteReport = true;
+                                                    $reportRow++;
+                                                }
+                                                continue;
+                                            }
+                                            if ($type === 'image') {
+                                                $path = $this->resolveImagePath((string) ($block['src'] ?? ''));
+                                                if ($path) {
+                                                    $s->mergeCells("E{$reportRow}:H{$reportRow}");
+                                                    $drawing = new Drawing();
+                                                    $drawing->setPath($path);
+                                                    $drawing->setHeight(90);
+                                                    $drawing->setCoordinates("E{$reportRow}");
+                                                    $drawing->setWorksheet($s);
+                                                    $s->getRowDimension($reportRow)->setRowHeight(95);
+                                                    $wroteReport = true;
+                                                    $reportRow++;
+                                                }
+                                                continue;
+                                            }
+                                        }
                                     }
 
-                                    // Re-assert detail text to guard against later merges overwriting E cell
-                                    if (isset($detailText) && $detailText !== '') {
-                                        try { $s->setCellValue("E{$critRow}", $detailText); } catch (\Throwable $ex) {}
+                                    $evList = $c->evidences->pluck('name')->implode(', ');
+                                    $s->setCellValue("I{$row}", $evList ?: '-');
+
+                                    if (!$wroteReport) {
+                                        $s->mergeCells("E{$row}:H{$row}");
+                                        $s->setCellValue("E{$row}", '-');
+                                        $s->getStyle("E{$row}")->getAlignment()->setWrapText(true);
+                                        $reportRow = $row + 1;
                                     }
-                                    $row++;
+
+                                    $row = max($row + 1, $reportRow);
                                     $ci++;
                                 }
 
                                 // ===== เกณฑ์การให้คะแนน + การประเมินตนเอง (ท้ายตัวชี้วัด) =====
                                 $start2 = $row + 1;
                                 $s->mergeCells("A{$start2}:D{$start2}")->setCellValue("A{$start2}", 'เกณฑ์การให้คะแนน');
-                                $s->mergeCells("E{$start2}:F{$start2}")->setCellValue("E{$start2}", 'การประเมินตนเอง');
+                                $s->mergeCells("E{$start2}:I{$start2}")->setCellValue("E{$start2}", 'การประเมินตนเอง');
 
                                 $r = $start2 + 1;
                                 // ใช้ comment จาก Indicator ฉบับเต็มที่ preload ไว้ใน $rel (จะมีทุกคอลัมน์)
@@ -285,12 +472,12 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 }
                                 $s->mergeCells("A{$r}:C{$r}")->setCellValue("A{$r}", $commentText);
                                 $s->setCellValue("D{$r}", '........... คะแนน');
-                                $s->mergeCells("E{$r}:F{$r}")->setCellValue("E{$r}", '');
+                                $s->mergeCells("E{$r}:I{$r}")->setCellValue("E{$r}", '');
                                 for ($k = 0; $k < 0; $k++) {
                                     $r++;
                                     $s->mergeCells("A{$r}:C{$r}")->setCellValue("A{$r}", '............................');
                                     $s->setCellValue("D{$r}", '........... คะแนน');
-                                    $s->mergeCells("E{$r}:F{$r}")->setCellValue("E{$r}", $k === 1 ? '✓' : '');
+                                    $s->mergeCells("E{$r}:I{$r}")->setCellValue("E{$r}", $k === 1 ? '✓' : '');
                                 }
                                 // แปลง comment ที่เป็น <li> ให้แสดงแยกแถว
                                 // ถ้าไม่มีรายการ <li> ให้กรอกคะแนนลงแถวแรกและติ๊กถูก
@@ -300,7 +487,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                                     $scoreText = rtrim(rtrim(number_format($score, 2, '.', ''), '0'), '.');
                                     try {
                                         $s->setCellValue("D{$r1}", ($scoreText === '' ? '0' : $scoreText) . ' คะแนน');
-                                        $s->mergeCells("E{$r1}:F{$r1}")->setCellValue("E{$r1}", '✓');
+                                        $s->mergeCells("E{$r1}:I{$r1}")->setCellValue("E{$r1}", '✓');
                                     } catch (\Throwable $ex) {
                                     }
                                 }
@@ -336,12 +523,12 @@ class IndicatorsExport implements FromCollection, WithEvents
                                         if ($writeRow > $r) {
                                             $s->mergeCells("A{$writeRow}:C{$writeRow}")->setCellValue("A{$writeRow}", $txt);
                                             $s->setCellValue("D{$writeRow}", '........... คะแนน');
-                                            $s->mergeCells("E{$writeRow}:F{$writeRow}")->setCellValue("E{$writeRow}", '');
+                                            $s->mergeCells("E{$writeRow}:I{$writeRow}")->setCellValue("E{$writeRow}", '');
                                             $r = $writeRow;
                                         } else {
                                             $s->mergeCells("A{$writeRow}:C{$writeRow}")->setCellValue("A{$writeRow}", $txt);
                                             $s->setCellValue("D{$writeRow}", '........... คะแนน');
-                                            $s->mergeCells("E{$writeRow}:F{$writeRow}")->setCellValue("E{$writeRow}", '');
+                                            $s->mergeCells("E{$writeRow}:I{$writeRow}")->setCellValue("E{$writeRow}", '');
                                         }
                                         // override placeholder score with parsed value if available
                                         try {
@@ -378,13 +565,13 @@ class IndicatorsExport implements FromCollection, WithEvents
                                         $match = ($liScore !== null) && (abs($liScore - $scoreClean) < 0.001);
                                         if ($match) {
                                             $s->setCellValue("D{$rowPtr}", rtrim(rtrim(number_format($score, 2, '.', ''), '0'), '.') . ' คะแนน');
-                                            $s->mergeCells("E{$rowPtr}:F{$rowPtr}")->setCellValue("E{$rowPtr}", '✓');
+                                            $s->mergeCells("E{$rowPtr}:I{$rowPtr}")->setCellValue("E{$rowPtr}", '✓');
                                         }
                                         $rowPtr++;
                                     }
                                 }
 
-                                $s->getStyle("A{$start2}:F{$r}")->applyFromArray([
+                                $s->getStyle("A{$start2}:I{$r}")->applyFromArray([
                                     'borders' => [
                                         'allBorders' => [
                                             'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
@@ -447,7 +634,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 // ===== เกณฑ์การให้คะแนน + การประเมินตนเอง (ต่อ-ตัวชี้วัด) =====
                                 $start = $row + 1;
                                 $s->mergeCells("A{$start}:D{$start}")->setCellValue("A{$start}", 'เกณฑ์การให้คะแนน');
-                                $s->mergeCells("E{$start}:F{$start}")->setCellValue("E{$start}", 'การประเมินตนเอง');
+                                $s->mergeCells("E{$start}:I{$start}")->setCellValue("E{$start}", 'การประเมินตนเอง');
 
                                 // เก็บเกณฑ์จาก criterias ของตัวชี้วัดนี้
                                 $criteriaTexts = [];
@@ -466,13 +653,13 @@ class IndicatorsExport implements FromCollection, WithEvents
                                     $row++;
                                     $s->mergeCells("A{$row}:C{$row}")->setCellValue("A{$row}", $txt);
                                     $s->setCellValue("D{$row}", '........... คะแนน');
-                                    $s->mergeCells("E{$row}:F{$row}")->setCellValue("E{$row}", '');
+                                    $s->mergeCells("E{$row}:I{$row}")->setCellValue("E{$row}", '');
                                 }
 
                                 // สไตล์กรอบของบล็อคคะแนน (รวมหัว)
                                 $firstRow = $start;
                                 $lastRow  = $row;
-                                $s->getStyle("A{$firstRow}:F{$lastRow}")->applyFromArray([
+                                $s->getStyle("A{$firstRow}:I{$lastRow}")->applyFromArray([
                                     'borders' => [
                                         'allBorders' => [
                                             'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
@@ -492,7 +679,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                         } else {
                             // ถ้าไม่มี indicator → แสดง "ไม่มีข้อมูล"
                             $s->setCellValue("A{$row}", '-');
-                            $s->mergeCells("B{$row}:F{$row}")
+                            $s->mergeCells("B{$row}:I{$row}")
                                 ->setCellValue("B{$row}", 'ไม่มีข้อมูล');
                             $row++;
                         }
@@ -504,7 +691,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                         // ===== เกณฑ์การให้คะแนน + การประเมินตนเอง =====
                         $start = $row + 1;
                         $s->mergeCells("A{$start}:D{$start}")->setCellValue("A{$start}", 'เกณฑ์การให้คะแนน');
-                        $s->mergeCells("E{$start}:F{$start}")->setCellValue("E{$start}", 'การประเมินตนเอง');
+                        $s->mergeCells("E{$start}:I{$start}")->setCellValue("E{$start}", 'การประเมินตนเอง');
 
                         // รวบรวมเกณฑ์การให้จาก Criteria ของตัวชี้วัดในด้านนี้ แทนที่จุดไข่ปลา
                         $criteriaTexts = [];
@@ -527,13 +714,13 @@ class IndicatorsExport implements FromCollection, WithEvents
                             $row++;
                             $s->mergeCells("A{$row}:C{$row}")->setCellValue("A{$row}", $txt);
                             $s->setCellValue("D{$row}", '........... คะแนน');
-                            $s->mergeCells("E{$row}:F{$row}")->setCellValue("E{$row}", '');
+                            $s->mergeCells("E{$row}:I{$row}")->setCellValue("E{$row}", '');
                         }
 
                         // สไตล์กรอบของบล็อคคะแนน (รวมหัวเรื่อง)
                         $firstRow = $start; // หัวบล็อค
                         $lastRow  = $row;   // แถวสุดท้ายของรายการ
-                        $s->getStyle("A{$firstRow}:F{$lastRow}")->applyFromArray([
+                        $s->getStyle("A{$firstRow}:I{$lastRow}")->applyFromArray([
                             'borders' => [
                                 'allBorders' => [
                                     'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
@@ -557,11 +744,14 @@ class IndicatorsExport implements FromCollection, WithEvents
                 $s->getColumnDimension('B')->setWidth(50);
                 $s->getColumnDimension('C')->setWidth(12);
                 $s->getColumnDimension('D')->setWidth(12);
-                $s->getColumnDimension('E')->setWidth(20);
-                $s->getColumnDimension('F')->setWidth(25);
+                $s->getColumnDimension('E')->setWidth(18);
+                $s->getColumnDimension('F')->setWidth(18);
+                $s->getColumnDimension('G')->setWidth(18);
+                $s->getColumnDimension('H')->setWidth(18);
+                $s->getColumnDimension('I')->setWidth(25);
 
                 // เส้นกรอบรวม
-                $s->getStyle("A1:F{$row}")->applyFromArray([
+                $s->getStyle("A1:I{$row}")->applyFromArray([
                     'borders' => [
                         'allBorders' => [
                             'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
