@@ -25,9 +25,8 @@ echo "[setup] Fixing permissions"
 chown -R www-data:www-data storage bootstrap/cache public/storage || true
 chmod -R ug+rwX storage bootstrap/cache public/storage || true
 
-echo "[setup] Running migrations + seeds"
-php artisan migrate --force
-php artisan db:seed --force || true
+echo "[setup] Running migrations"
+php artisan migrate
 
 echo "[setup] Copying fonts (if available)"
 php artisan fonts:copy || true
@@ -38,4 +37,3 @@ php artisan route:cache
 php artisan view:cache
 
 echo "[setup] Done"
-
