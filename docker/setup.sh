@@ -21,6 +21,8 @@ echo "[setup] App key + storage link"
 php artisan key:generate --force || true
 php artisan storage:link || true
 
+echo "[setup] Note: keep dbdata volume (avoid 'docker compose down -v') to retain data"
+
 echo "[setup] Fixing permissions"
 chown -R www-data:www-data storage bootstrap/cache public/storage || true
 chmod -R ug+rwX storage bootstrap/cache public/storage || true
