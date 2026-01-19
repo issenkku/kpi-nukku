@@ -160,13 +160,22 @@
                                         <span class="evidence-name">
                                             @php
                                                 $ext = strtolower(pathinfo($evidence->name, PATHINFO_EXTENSION));
-                                                $openInNewTab = $type === 'url' || in_array($ext, [
+                                                $openInNewTab = $type === 'url' || in_array($type, [
+                                                    'jpg',
+                                                    'jpeg',
+                                                    'png',
+                                                    'gif',
+                                                    'svg',
+                                                    'webp',
+                                                    'image',
+                                                ]) || in_array($ext, [
                                                     'pdf',
                                                     'jpg',
                                                     'jpeg',
                                                     'png',
                                                     'gif',
                                                     'svg',
+                                                    'webp',
                                                     'txt',
                                                     'csv',
                                                     'htm',
