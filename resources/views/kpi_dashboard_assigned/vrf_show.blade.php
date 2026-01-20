@@ -32,6 +32,23 @@
                         <span class="value">-</span>
                     @endforelse
                 </div>
+                @php
+                    $workGroups = $indicator->assignments
+                        ->map(fn($a) => optional(optional($a->collectorUser)->department)->work_group)
+                        ->filter()
+                        ->unique()
+                        ->values();
+                @endphp
+                <div class="info-row">
+                    <span class="label">สังกัดงาน:</span>
+                    @forelse($workGroups as $workGroup)
+                        <span class="chip">
+                            {{ $workGroup }}
+                        </span>
+                    @empty
+                        <span class="value">-</span>
+                    @endforelse
+                </div>
                 <div class="info-row">
                     <span class="label">ผู้รับผิดชอบในการรวบรวม:</span>
                     @forelse($indicator->assignments as $assignment)

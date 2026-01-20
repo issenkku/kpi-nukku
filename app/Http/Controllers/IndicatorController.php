@@ -6,6 +6,7 @@ use App\Http\Resources\IndicatorResource;
 use App\Models\Category;
 use App\Models\Criteria;
 use App\Models\Department;
+use App\Models\Affiliation;
 use App\Models\Formula;
 use App\Models\Indicator;
 use App\Models\Standard;
@@ -24,7 +25,7 @@ class IndicatorController extends Controller
 
         $indicators = Indicator::with([
             'category.standard',
-            'assignments.user',
+            'assignments.user.department',
             'criterias',
             // 'evidences',
         ])
@@ -443,7 +444,17 @@ class IndicatorController extends Controller
                 ->when($standardId, fn($q) => $q->where('standard_id', $standardId))
                 ->pluck('name', 'id')
                 ->toArray(),
-            'departments' => Department::query()->pluck('name', 'id')->toArray(),
+            'departments' => Department::query()
+                ->select('id', 'name', 'work_group')
+                ->orderBy('name')
+                ->get()
+                ->map(fn($d) => [
+                    'id' => $d->id,
+                    'name' => $d->name,
+                    'work_group' => $d->work_group,
+                ])
+                ->toArray(),
+            'affiliations' => Affiliation::query()->orderBy('name')->pluck('name', 'name')->toArray(),
             'categoriesByStandard' => $categoriesByStandard,
         ];
     }
@@ -502,6 +513,7 @@ class IndicatorController extends Controller
                         'name' => $user->name,
                         'department_id' => $user->department_id,
                         'department_name' => optional($user->department)->name,
+                        'work_group_name' => optional($user->department)->work_group,
                     ] : null,
                 ];
             }),

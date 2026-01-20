@@ -470,6 +470,9 @@
                             <a href="{{ route('departments.index') }}" class="buttonNav-item">
                                 <i class="fa-solid fa-sitemap"></i> จัดการหน่วยงาน
                             </a>
+                            <a href="{{ route('affiliations.index') }}" class="buttonNav-item">
+                                <i class="fa-solid fa-diagram-project"></i> จัดการสังกัดงาน
+                            </a>
                         @endcan
                         @can('view-standards')
                             <a href="{{ route('standards.index') }}" class="buttonNav-item">

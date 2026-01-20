@@ -11,6 +11,7 @@ class Department extends Model
     
     protected $fillable = [
         'name',
+        'work_group',
     ];
 
     protected $hidden = [

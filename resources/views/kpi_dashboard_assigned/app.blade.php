@@ -48,10 +48,10 @@
                                 data-column="3" data-order="desc" role="menuitem">ชื่อตัวบ่งชี้ (Z-A)</button>
                             <button
                                 class="sort-option text-left block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                data-column="7" data-order="asc" role="menuitem">ผลลัพธ์ (น้อยไปมาก)</button>
+                                data-column="8" data-order="asc" role="menuitem">ผลลัพธ์ (น้อยไปมาก)</button>
                             <button
                                 class="sort-option text-left block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                data-column="7" data-order="desc" role="menuitem">ผลลัพธ์ (มากไปน้อย)</button>
+                                data-column="8" data-order="desc" role="menuitem">ผลลัพธ์ (มากไปน้อย)</button>
                             <button id="clear-sort" type="button"
                                 class=" text-left block w-full px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">ล้างตัวเรียงลำดับ</button>
                         </div>
@@ -167,6 +167,47 @@
                             </div>
 
                             <div class="filter-section">
+                                {{-- Section: สังกัดงาน --}}
+                                <h3 class="dropdown-title">สังกัดงาน</h3>
+                                <div class="dropdown-multiselect" id="workGroupDropdown">
+                                    <div class="dropdown-btn" onclick="toggleDropdown('workGroupDropdown')">
+                                        <span id="workGroup-label">เลือกสังกัดงาน</span>
+                                        <i class="fa-solid fa-caret-down"></i>
+                                    </div>
+                                    <div class="dropdown-content">
+                                        <div class="dropdown-tools" data-section="workGroupDropdown">
+                                            <input type="text" name="work_group_search" class="filter-search"
+                                                placeholder="ค้นหา..." aria-label="ค้นหาสังกัดงาน">
+                                            <div class="tools-actions">
+                                                <button type="button" class="tool-btn"
+                                                    data-action="select-all">ทั้งหมด</button>
+                                                <button type="button" class="tool-btn"
+                                                    data-action="clear-all">ล้างทั้งหมด</button>
+                                            </div>
+                                        </div>
+                                        @php
+                                            $workGroupOptions = $indicators
+                                                ->flatMap(function ($i) {
+                                                    return collect($i['assignments'] ?? [])
+                                                        ->pluck('user.work_group_name')
+                                                        ->filter();
+                                                })
+                                                ->unique()
+                                                ->values();
+                                        @endphp
+                                        @foreach ($workGroupOptions as $workGroup)
+                                            <label>
+                                                <input type="checkbox" name="work_group[]"
+                                                    class="filter-option workgroup-option" data-column="6"
+                                                    data-value="{{ $workGroup }}">
+                                                <span>{{ $workGroup }}</span>
+                                            </label>
+                                        @endforeach
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="filter-section">
                                 {{-- Section: หน่วยงานที่รับผิดชอบ --}}
                                 <h3 class="dropdown-title">หน่วยงานที่รับผิดชอบ</h3>
                                 <div class="dropdown-multiselect" id="deptDropdown">
@@ -198,7 +239,7 @@
                                         @foreach ($deptOptions as $dept)
                                             <label>
                                                 <input type="checkbox" name="dept[]" class="filter-option dept-option"
-                                                    data-column="6" data-value="{{ $dept }}">
+                                                    data-column="7" data-value="{{ $dept }}">
                                                 <span>{{ $dept }}</span>
                                             </label>
                                         @endforeach
@@ -271,7 +312,7 @@
                                         @foreach ($statusCodes as $statusCode)
                                             <label>
                                                 <input type="checkbox" name="status[]"
-                                                    class="filter-option status-option" data-column="9"
+                                                    class="filter-option status-option" data-column="10"
                                                     data-value="{{ $statusCode }}">
                                                 <span>{{ $statusMap[$statusCode] ?? 'ไม่ระบุ' }}</span>
                                             </label>
@@ -306,7 +347,7 @@
                                         @foreach ($docStatusOptions as $docStatus)
                                             <label>
                                                 <input type="checkbox" name="doc_status[]"
-                                                    class="filter-option statusenv-option" data-column="10"
+                                                    class="filter-option statusenv-option" data-column="11"
                                                     data-value="{{ $docStatus }}">
                                                 <span>{{ $docStatus }}</span>
                                             </label>
@@ -337,12 +378,12 @@
                                         </div>
                                         <label>
                                             <input type="checkbox" name="assigned[]"
-                                                class="filter-option assigned-option" data-column="11" data-value="1">
+                                                class="filter-option assigned-option" data-column="12" data-value="1">
                                             <span>ที่ได้รับมอบหมาย</span>
                                         </label>
                                         <label>
                                             <input type="checkbox" name="assigned[]"
-                                                class="filter-option assigned-option" data-column="11" data-value="0">
+                                                class="filter-option assigned-option" data-column="12" data-value="0">
                                             <span>ตัวบ่งชี้อื่นๆ นอกจากที่ได้รับมอบหมาย</span>
                                         </label>
                                     </div>
@@ -400,6 +441,12 @@
                         title="ประเภทตัวบ่งชี้ (คุณภาพ, ปริมาณ, คุณภาพ/ปริมาณ)">
                         <div class="flex items-center justify-center min-w-11">
                             ประเภท
+                        </div>
+                    </th>
+                    <th class="w-fit text-xs sm:text-sm font-medium text-gray-900 cursor-pointer select-none hidden xl:table-cell"
+                        title="สังกัดงาน">
+                        <div class="flex items-center justify-center min-w-28">
+                            สังกัดงาน
                         </div>
                     </th>
                     <th class="w-fit text-xs sm:text-sm font-medium text-gray-900 cursor-pointer select-none hidden xl:table-cell"
@@ -470,6 +517,38 @@
                             {{ $indicator['code'] }}</td>
                         <td class="max-w-11 text-xs sm:text-sm text-gray-700 text-center align-top hidden xl:table-cell">
                             {{ $indicator['type'] ?? 'ไม่ระบุ' }}
+                        </td>
+                        <td class="text-xs sm:text-sm text-gray-700 align-top max-w-full cursor-auto hidden xl:table-cell"
+                            data-rowlink-ignore>
+                            @php
+                                $workGroups = collect($indicator['assignments'] ?? [])
+                                    ->pluck('user.work_group_name')
+                                    ->filter(fn($name) => filled($name))
+                                    ->unique()
+                                    ->values();
+                                $workGroupTotal = $workGroups->count();
+                            @endphp
+
+                            @if ($workGroupTotal === 0)
+                                <span class="text-gray-400">ไม่ระบุ</span>
+                            @else
+                                <div x-data="{ open: false }" class="flex flex-wrap gap-1 ">
+                                    @foreach ($workGroups as $name)
+                                        <span x-show="@json($loop->iteration <= 3) || open" x-cloak
+                                            class="inline-flex items-center rounded-full bg-slate-50 text-slate-700 ring-1 ring-inset ring-slate-200 px-2 py-0.5 text-xs md:text-xs max-w-52 truncate"
+                                            title="{{ $name }}">
+                                            {{ $name }}
+                                        </span>
+                                    @endforeach
+
+                                    @if ($workGroupTotal > 3)
+                                        <button type="button"
+                                            class="cursor-pointer inline-flex items-center rounded-full bg-slate-300 text-slate-700 ring-1 ring-inset ring-slate-200 px-2 py-0.5 text-xs md:text-xs hover:bg-slate-200"
+                                            @click="open = !open" :aria-expanded="open.toString()"
+                                            x-text="open ? 'แสดงน้อยลง' : '+{{ $workGroupTotal - 3 }}'"></button>
+                                    @endif
+                                </div>
+                            @endif
                         </td>
                         <td class="text-xs sm:text-sm text-gray-700 align-top max-w-full cursor-auto hidden xl:table-cell"
                             data-rowlink-ignore>
@@ -1207,8 +1286,8 @@
                 if (!el) return;
 
                 // Close all other filter dropdowns first
-                const allDropdowns = ['yearDropdown', 'standardDropdown', 'dimensionDropdown', 'deptDropdown', 'typeDropdown',
-                    'statusDropdown', 'statusEnvDropdown'
+                const allDropdowns = ['yearDropdown', 'standardDropdown', 'dimensionDropdown', 'workGroupDropdown',
+                    'deptDropdown', 'typeDropdown', 'statusDropdown', 'statusEnvDropdown', 'assignedDropdown'
                 ];
                 allDropdowns.forEach(dropdownId => {
                     if (dropdownId !== id) {
@@ -1403,7 +1482,7 @@
 
                         filterCount += selections.length;
 
-                        if (colIdx === 6) {
+                        if (colIdx === 6 || colIdx === 7) {
                             const regex = selections
                                 .map((v) => escapeRegex(String(v)))
                                 .join('|');
@@ -1451,6 +1530,7 @@
                     $('#year-label').text('เลือกปี');
                     $('#standard-label').text('เลือกมาตรฐาน');
                     $('#dimension-label').text('เลือกด้าน');
+                    $('#workGroup-label').text('เลือกสังกัดงาน');
                     $('#dept-label').text('เลือกหน่วยงาน');
                     $('#type-label').text('เลือกประเภท');
                     $('#status-label').text('เลือกสถานะ');
@@ -1481,6 +1561,7 @@
                 setupDropdownLabel('yearDropdown', 'year-label', 'เลือกปี');
                 setupDropdownLabel('standardDropdown', 'standard-label', 'เลือกมาตรฐาน');
                 setupDropdownLabel('dimensionDropdown', 'dimension-label', 'เลือกด้าน');
+                setupDropdownLabel('workGroupDropdown', 'workGroup-label', 'เลือกสังกัดงาน');
                 setupDropdownLabel('deptDropdown', 'dept-label', 'เลือกหน่วยงาน');
                 setupDropdownLabel('typeDropdown', 'type-label', 'เลือกประเภท');
                 setupDropdownLabel('statusDropdown', 'status-label', 'เลือกสถานะ');
@@ -1541,6 +1622,7 @@
                         const defaultText = btn.id === 'year-label' ? 'เลือกปี' :
                             btn.id === 'standard-label' ? 'เลือกมาตรฐาน' :
                             btn.id === 'dimension-label' ? 'เลือกด้าน' :
+                            btn.id === 'workGroup-label' ? 'เลือกสังกัดงาน' :
                             btn.id === 'dept-label' ? 'เลือกหน่วยงาน' :
                             btn.id === 'type-label' ? 'เลือกประเภท' :
                             btn.id === 'status-label' ? 'เลือกสถานะ' :

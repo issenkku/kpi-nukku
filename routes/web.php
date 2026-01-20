@@ -8,6 +8,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DashboardExportController;
 use App\Http\Controllers\DashboardKpiUserController;
 use App\Http\Controllers\DashboardKpiAdminController;
+use App\Http\Controllers\AffiliationsController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\EvidenceController;
 use App\Http\Controllers\IndicatorController;
@@ -194,6 +195,27 @@ Route::middleware(['auth'])->group(function () {
 
         // Delete
         Route::delete('/{id}', [DepartmentController::class, 'destroy'])
+            ->name('destroy')
+            ->middleware('permission:delete-departments');
+    });
+
+    // ===== AFFILIATION ROUTES =====
+    Route::prefix('affiliations')->name('affiliations.')->middleware('permission:view-departments')->group(function () {
+        // View
+        Route::get('/', [AffiliationsController::class, 'index'])->name('index');
+
+        // Create
+        Route::post('/store', [AffiliationsController::class, 'store'])
+            ->name('store')
+            ->middleware('permission:create-departments');
+
+        // Update
+        Route::put('/{id}', [AffiliationsController::class, 'update'])
+            ->name('update')
+            ->middleware('permission:edit-departments');
+
+        // Delete
+        Route::delete('/{id}', [AffiliationsController::class, 'destroy'])
             ->name('destroy')
             ->middleware('permission:delete-departments');
     });

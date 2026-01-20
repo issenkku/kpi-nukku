@@ -1,28 +1,23 @@
 @extends('layouts.app')
-@section('title', 'จัดการข้อมูลหน่วยงาน')
+@section('title', 'จัดการข้อมูลสังกัดงาน')
 
-@section('header', 'จัดการข้อมูลหน่วยงาน')
+@section('header', 'จัดการข้อมูลสังกัดงาน')
 @section('subheader', 'ระบบบริหารจัดการข้อมูลการรับรองสถาบันจากสภาการพยาบาล')
 
 @section('content')
+    @php
+        $affiliations = $affiliations ?? ($workGroups ?? []);
+    @endphp
     <div class="department-card">
-        <!-- ฟอร์มเพิ่มหน่วยงาน -->
+        <!-- ฟอร์มเพิ่มสังกัดงาน -->
         <x-card>
-            <div class="card-title">เพิ่มหน่วยงาน</div>
-            <form action="{{ route('departments.store') }}" method="POST">
+            <div class="card-title">เพิ่มสังกัดงาน</div>
+            <form action="{{ Route::has('affiliations.store') ? route('affiliations.store') : url('/affiliations/store') }}"
+                method="POST">
                 @csrf
                 <div class="form-group">
-                    <label class="form-label">ชื่อหน่วยงาน <span class="required">*</span></label>
-                    <input type="text" name="name" class="form-input" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">สังกัดงาน</label>
-                    <select name="work_group" class="form-input">
-                        <option value="">-- เลือกสังกัดงาน --</option>
-                        @foreach (($affiliations ?? $workGroups ?? []) as $workGroup)
-                            <option value="{{ $workGroup }}">{{ $workGroup }}</option>
-                        @endforeach
-                    </select>
+                    <label class="form-label">ชื่อสังกัดงาน <span class="required">*</span></label>
+                    <input type="text" name="name" class="form-input" placeholder="กรอกชื่อสังกัดงาน" required>
                 </div>
 
                 <button type="submit" class="btn btn-primary">
@@ -32,7 +27,7 @@
         </x-card>
 
         <x-card class="space-y-4">
-            <div class="card-title">รายชื่อหน่วยงานที่มี</div>
+            <div class="card-title">รายชื่อสังกัดงานที่มี</div>
 
             <div class="search-button-container">
                 <!-- Search -->
@@ -46,7 +41,7 @@
                     </div>
                     <input type="text" id="custom-search"
                         class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/40"
-                        placeholder="ค้นหาหน่วยงาน">
+                        placeholder="ค้นหาสังกัดงาน">
                 </div>
 
                 <!-- Sort -->
@@ -65,10 +60,10 @@
                         <button class="dropdown-item sort-option" data-column="0" data-order="desc" role="menuitem">ลำดับ
                             (มากไปน้อย)</button>
                         <button class="dropdown-item sort-option" data-column="1" data-order="asc"
-                            role="menuitem">ชื่อผู้ใช้งาน
+                            role="menuitem">ชื่อสังกัดงาน
                             (A-Z)</button>
                         <button class="dropdown-item sort-option" data-column="1" data-order="desc"
-                            role="menuitem">ชื่อผู้ใช้งาน (Z-A)</button>
+                            role="menuitem">ชื่อสังกัดงาน (Z-A)</button>
                         <div class="dropdown-divider"></div>
                         <button id="clear-sort" type="button" class="dropdown-item"
                             style="color:#4b5563;">ล้างการเรียงลำดับ</button>
@@ -79,28 +74,29 @@
                 <thead>
                     <tr>
                         <th class="text-xs !text-center sm:text-sm font-medium text-gray-900 cursor-pointer">ลำดับ</th>
-                        <th class="text-xs !text-center sm:text-sm font-medium text-gray-900 cursor-pointer">ชื่อหน่วยงาน
+                        <th class="text-xs !text-center sm:text-sm font-medium text-gray-900 cursor-pointer">ชื่อสังกัดงาน
                         </th>
-                        <th class="text-xs !text-center sm:text-sm font-medium text-gray-900 cursor-pointer">สังกัดงาน</th>
                         <th class="text-xs !text-center sm:text-sm font-medium text-gray-900 cursor-pointer w-5"><span class="w-fit">จัดการ</span></th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach ($departments as $index => $item)
+                    @foreach ($affiliations as $index => $item)
+                        @php
+                            $itemId = data_get($item, 'id', $index + 1);
+                            $itemName = data_get($item, 'name', $item);
+                        @endphp
                         <tr>
                             <td class="text-xs text-center sm:text-sm text-gray-700 align-top">{{ $index + 1 }}</td>
-                            <td class="text-xs sm:text-sm text-gray-700 align-top">{{ $item->name }}</td>
-                            <td class="text-xs sm:text-sm text-gray-700 align-top">{{ $item->work_group ?? '-' }}</td>
+                            <td class="text-xs sm:text-sm text-gray-700 align-top">{{ $itemName }}</td>
                             <td class="text-xs text-center sm:text-sm text-gray-700 align-top">
                                 <div class="categories-actions">
                                     <button type="button" class="btn btn-outline"
-                                        data-action="edit-department" data-id="{{ $item->id }}"
-                                        data-name="{{ $item->name }}" data-work-group="{{ $item->work_group }}">
+                                        data-action="edit-affiliation" data-id="{{ $itemId }}" data-name="{{ $itemName }}">
                                         <i class="fa fa-edit"></i> แก้ไข
                                     </button>
 
                                     <button type="button" class="btn btn-outline !text-red-500 !border-red-500"
-                                        data-action="delete-department" data-id="{{ $item->id }}" data-name="{{ $item->name }}">
+                                        data-action="delete-affiliation" data-id="{{ $itemId }}" data-name="{{ $itemName }}">
                                         <i class="fa fa-trash"></i> ลบ
                                     </button>
                                 </div>
@@ -113,36 +109,24 @@
     </div>
 
     <!-- Edit Modal -->
-    <x-modal title="แก้ไขชื่อหน่วยงาน" size="md" context="editModal" :closeOnBg="false">
+    <x-modal title="แก้ไขชื่อสังกัดงาน" size="md" context="editModal" :closeOnBg="false">
         <div class="mb-4 text-sm text-gray-600">
-            แก้ไขชื่อหน่วยงานที่ต้องการแล้วกดบันทึกเพื่อบันทึกผลที่ต้องการ
-            <p class="mt-2">ชื่อหน่วยงานเดิม : <span id="currentDepartmentName" class="font-semibold text-pretty"></span>
+            แก้ไขชื่อสังกัดงานที่ต้องการแล้วกดบันทึกเพื่อบันทึกผลที่ต้องการ
+            <p class="mt-2">ชื่อสังกัดงานเดิม : <span id="currentDepartmentName" class="font-semibold text-pretty"></span>
             </p>
         </div>
 
         <form id="editForm" method="POST"
-            action="{{ session('edit_department_id') ? url('/departments/' . session('edit_department_id')) : '' }}">
+            action="{{ session('edit_affiliation_id') ? url('/affiliations/' . session('edit_affiliation_id')) : '' }}">
             @csrf
             @method('PUT')
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    ชื่อหน่วยงาน <span class="text-red-500">*</span>
+                    ชื่อสังกัดงาน <span class="text-red-500">*</span>
                 </label>
                 <input type="text" id="editName" name="name"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     required value="{{ old('name') }}">
-            </div>
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-2">
-                    สังกัดงาน
-                </label>
-                <select id="editWorkGroup" name="work_group"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="">-- เลือกสังกัดงาน --</option>
-                    @foreach (($affiliations ?? $workGroups ?? []) as $workGroup)
-                        <option value="{{ $workGroup }}">{{ $workGroup }}</option>
-                    @endforeach
-                </select>
             </div>
             @error('name')
                 <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{{ $message }}</div>
@@ -159,15 +143,15 @@
     </x-modal>
 
     <!-- Delete Modal -->
-    <x-modal title="ลบชื่อหน่วยงาน" size="md" context="deleteModal" :closeOnBg="false">
+    <x-modal title="ลบชื่อสังกัดงาน" size="md" context="deleteModal" :closeOnBg="false">
         <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
             <p class="text-sm text-yellow-800">
-                <strong>คำเตือน :</strong> การลบชื่อหน่วยงานที่ถูกนำมาใช้แล้วจะไม่สามารถลบได้
+                <strong>คำเตือน :</strong> การลบชื่อสังกัดงานที่ถูกนำมาใช้แล้วจะไม่สามารถลบได้
             </p>
         </div>
 
         <div class="mb-6 text-center text-gray-700 text-sm">
-            คุณต้องการลบข้อมูลหน่วยงาน "<span id="deleteName" class="font-semibold text-red-600 text-pretty"></span>"
+            คุณต้องการลบข้อมูลสังกัดงาน "<span id="deleteName" class="font-semibold text-red-600 text-pretty"></span>"
             หรือไม่?
         </div>
 
@@ -299,19 +283,15 @@
         });
 
         // Modal helpers - Updated for Alpine.js component
-        window.openEditModal = function(id, name, workGroup) {
+        window.openEditModal = function(id, name) {
             const editName = document.getElementById('editName');
-            const editWorkGroup = document.getElementById('editWorkGroup');
             const editForm = document.getElementById('editForm');
             const currentName = document.getElementById('currentDepartmentName');
             if (!editName || !editForm || !currentName) {
                 return;
             }
             editName.value = name || '';
-            if (editWorkGroup) {
-                editWorkGroup.value = workGroup || '';
-            }
-            editForm.action = `/departments/${id}`;
+            editForm.action = `/affiliations/${id}`;
             currentName.innerText = name || '';
             window.dispatchEvent(new CustomEvent('modal:open', {
                 detail: {
@@ -327,7 +307,7 @@
                 return;
             }
             deleteName.textContent = name || '';
-            deleteForm.action = `/departments/${id}`;
+            deleteForm.action = `/affiliations/${id}`;
             window.dispatchEvent(new CustomEvent('modal:open', {
                 detail: {
                     context: 'deleteModal'
@@ -340,11 +320,10 @@
             const action = btn.getAttribute('data-action');
             const id = btn.getAttribute('data-id');
             const name = btn.getAttribute('data-name');
-            const workGroup = btn.getAttribute('data-work-group');
-            if (action === 'edit-department') {
-                openEditModal(id, name, workGroup);
+            if (action === 'edit-affiliation') {
+                openEditModal(id, name);
             }
-            if (action === 'delete-department') {
+            if (action === 'delete-affiliation') {
                 openDeleteModal(id, name);
             }
         });

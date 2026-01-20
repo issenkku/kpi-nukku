@@ -232,6 +232,7 @@ class DashboardKpiUserController extends Controller
                         'name' => $user->name,
                         'department_id' => $user->department_id,
                         'department_name' => optional($user->department)->name,
+                        'work_group_name' => optional($user->department)->work_group,
                     ] : null,
                 ];
             }),

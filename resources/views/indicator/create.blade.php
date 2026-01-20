@@ -1,4 +1,4 @@
-﻿@extends('layouts.app')
+@extends('layouts.app')
 
 @section('title', 'เพิ่มตัวบ่งชี้')
 
@@ -56,9 +56,11 @@
                     <x-card number="2" title="ผู้รับผิดชอบ">
                         <div x-data="{
                             usersAll: @js($usersForAssign),
+                            departmentsAll: @js($departments ?? []),
+                            workGroupSelected: (@js(old('work_group_ids', [])) || []).map(v => String(v)),
                             depSelected: (@js(old('department_ids', [])) || []).map(v => String(v)),
                             init() {
-                                this.$nextTick(() => setTimeout(() => this.refreshUsers(), 100));
+                                this.$nextTick(() => setTimeout(() => this.refreshDepartmentsAndUsers(), 100));
                             },
                             getMS(el) {
                                 if (!el) return null;
@@ -68,39 +70,74 @@
                                 return null;
                             },
                             usersEl() { return this.getMS(this.$refs.usersMulti) },
+                            deptsEl() { return this.getMS(this.$refs.deptMulti) },
+                            filteredDepartments() {
+                                if (!this.workGroupSelected.length) return this.departmentsAll;
+                                const set = new Set(this.workGroupSelected.map(String));
+                                return this.departmentsAll.filter(d => {
+                                    const wg = String(d?.work_group ?? '');
+                                    return wg && set.has(wg);
+                                });
+                            },
+                            allowedDeptIdsByWorkGroup() {
+                                return new Set(this.filteredDepartments().map(d => String(d.id)));
+                            },
                             filteredUsers() {
-                                if (!this.depSelected.length) return this.usersAll;
+                                if (!this.depSelected.length) return [];
                                 const set = new Set(this.depSelected.map(String));
                                 return this.usersAll.filter(u => {
                                     const depId = String(u?.department_id ?? u?.department?.id ?? u?.dept_id ?? u?.departmentId ?? '');
                                     return depId && set.has(depId);
                                 });
                             },
-                            refreshUsers() {
-                                const filtered = this.filteredUsers();
-                                // Keep selections that are still allowed based on multiselect state
+                            refreshDepartments(openDept = false) {
+                                const filtered = this.filteredDepartments();
                                 const allowed = new Set(filtered.map(x => String(x.id)));
-                                const u = (this.usersEl?.() || this.getMS?.(this.$refs?.usersMulti) || null);
-                                const keep = (u?.selected || []).map(String).filter(v => allowed.has(v));
-
-                                // Ask multiselect(user_ids) to update its options/selections via window event
+                                const d = this.deptsEl?.();
+                                const keep = (d?.selected || this.depSelected || []).map(String).filter(v => allowed.has(v));
+                                this.depSelected = keep;
                                 window.dispatchEvent(new CustomEvent('multiselect-update-options', {
-                                    detail: { name: 'user_ids', options: filtered, keep, open: !!(this.depSelected && this.depSelected.length) }
+                                    detail: { name: 'department_ids', options: filtered, keep, open: openDept }
                                 }));
-
-                                // Open users dropdown for visibility
+                                if (d) d.open = true;
+                            },
+                            refreshUsers(openUsers = false) {
+                                const filtered = this.filteredUsers();
+                                const allowed = new Set(filtered.map(x => String(x.id)));
+                                const u = this.usersEl?.();
+                                const keep = (u?.selected || []).map(String).filter(v => allowed.has(v));
+                                window.dispatchEvent(new CustomEvent('multiselect-update-options', {
+                                    detail: { name: 'user_ids', options: filtered, keep, open: openUsers || !!(this.depSelected && this.depSelected.length) }
+                                }));
                                 if (u) u.open = true;
+                            },
+                            refreshDepartmentsAndUsers(openDept = false, openUsers = false) {
+                                this.refreshDepartments(openDept);
+                                this.refreshUsers(openUsers);
                             }
                         }" x-init="init()"
                             @multiselect-change.window="
+            if ($event.detail?.name === 'work_group_ids') {
+                workGroupSelected = ($event.detail.values || []).map(String);
+                refreshDepartmentsAndUsers(true, false);
+                $nextTick(() => { document.getElementById('department_ids_search')?.focus(); });
+            }
             if ($event.detail?.name === 'department_ids') {
                 depSelected = ($event.detail.values || []).map(String);
-                refreshUsers();
+                refreshUsers(true);
+                setTimeout(() => {
+                    const u = usersEl?.();
+                    if (u) { u.open = true; }
+                    document.getElementById('user_ids_search')?.focus();
+                }, 0);
             }
         "
                             class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                            <x-multiselect name="department_ids" label="หน่วยงานที่รับผิดชอบ" :options="$departments"
-                                placeholder="กรุณาเลือกหน่วยงาน" searchable select-all />
+                            <x-multiselect name="work_group_ids" label="สังกัดงาน" :options="$affiliations ?? []"
+                                placeholder="กรุณาเลือกสังกัดงาน" searchable select-all />
+
+                            <x-multiselect x-ref="deptMulti" name="department_ids" label="หน่วยงานที่รับผิดชอบ"
+                                :options="$departments" placeholder="กรุณาเลือกหน่วยงาน" searchable select-all />
 
                             <x-multiselect x-ref="usersMulti" name="user_ids" label="ผู้รับผิดชอบในการรวบรวมข้อมูล"
                                 :options="$usersForAssign" optionValue="id" optionLabel="name" placeholder="กรุณาเลือกผู้รับผิดชอบ"

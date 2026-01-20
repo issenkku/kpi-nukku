@@ -46,7 +46,13 @@
         $collectors = $assignments->map(fn($a) => data_get($a, 'user.name'))->filter()->unique()->values()->all();
 
         // Distinct departments (from API's departments array)
-$departments = collect($dg('departments', []))->pluck('name')->unique()->values()->all();
+        $departments = collect($dg('departments', []))->pluck('name')->unique()->values()->all();
+        $workGroups = collect($dg('departments', []))
+            ->pluck('work_group')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
 
 // ---------- Checklist ----------
 $checklist = collect($dg('checklistItems', []))
@@ -172,6 +178,18 @@ $showChecklistSection = $type === 'checklist' || ($type !== 'variable_formula' &
                                 <ol class="list-decimal list-inside space-y-1 text-slate-900">
                                     @foreach ($departments as $department)
                                         <li>{{ $department }}</li>
+                                    @endforeach
+                                </ol>
+                            @else
+                                <div class="text-slate-400">-</div>
+                            @endif
+                        </div>
+                        <div>
+                            <div class="text-sm text-slate-500 mb-1">สังกัดงาน</div>
+                            @if (count($workGroups))
+                                <ol class="list-decimal list-inside space-y-1 text-slate-900">
+                                    @foreach ($workGroups as $workGroup)
+                                        <li>{{ $workGroup }}</li>
                                     @endforeach
                                 </ol>
                             @else
