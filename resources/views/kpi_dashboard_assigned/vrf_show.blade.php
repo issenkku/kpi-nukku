@@ -335,6 +335,8 @@
                                         <button type="button" class="btn btn-xs btn-outline comment-edit-btn">แก้ไข</button>
                                         <button type="button" class="btn btn-xs btn-primary comment-save-btn" style="display:none">บันทึก</button>
                                         <button type="button" class="btn btn-xs btn-outline comment-cancel-btn" style="display:none">ยกเลิก</button>
+                                        <button type="button" class="btn btn-xs btn-outline comment-image-btn" style="display:none">เพิ่มรูป</button>
+                                        <input type="file" class="comment-image-input hidden" accept="image/*">
                                     </div>
                                 @endif
                             </div>
@@ -520,6 +522,7 @@
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/fontfamily/trumbowyg.fontfamily.min.js">
     </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/base64/trumbowyg.base64.min.js"></script>
     <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/table/ui/trumbowyg.table.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Trumbowyg/2.27.3/plugins/table/trumbowyg.table.min.js"></script>
@@ -689,6 +692,8 @@
         }
 
 
+        var lastActiveEditor = null;
+        var lastActiveTextarea = null;
         document.addEventListener('DOMContentLoaded', function() {
             const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
             const fileHandlers = {};
@@ -867,8 +872,6 @@
             }
 
             /*** ---------- Trumbowyg Editor ---------- ***/
-            let lastActiveEditor = null;
-            let lastActiveTextarea = null;
             function insertImageIntoTextarea(textarea, dataUrl) {
                 const html = `<img src="${dataUrl}">`;
                 const start = textarea.selectionStart ?? textarea.value.length;
@@ -1069,7 +1072,7 @@
                             ['fontsize'],
                             ['foreColor', 'backColor'],
                             ['strong', 'em', 'del', 'underline'],
-                            ['link'],
+                            ['link', 'base64'],
                             ['justifyLeft', 'justifyCenter', 'justifyRight', 'justifyFull'],
                             ['unorderedList', 'orderedList'],
                             ['table'],
@@ -1119,7 +1122,7 @@
                             ['fontsize'],
                             ['foreColor', 'backColor'],
                             ['strong', 'em', 'del'],
-                            ['link'],
+                            ['link', 'base64'],
                             ['unorderedList', 'orderedList'],
                             ['table'],
                             ['justifyLeft', 'justifyCenter', 'justifyRight', 'justifyFull'],
@@ -1181,6 +1184,8 @@
                 const editBtn = section.querySelector('.comment-edit-btn');
                 const saveBtn = section.querySelector('.comment-save-btn');
                 const cancelBtn = section.querySelector('.comment-cancel-btn');
+                const imageBtn = section.querySelector('.comment-image-btn');
+                const imageInput = section.querySelector('.comment-image-input');
                 const criteriaId = section.getAttribute('data-criteria-id');
                 const storeUrl = section.getAttribute('data-store-url');
                 const statusInput = document.getElementById('status-input');
@@ -1190,6 +1195,7 @@
                 let editorBox = null;
 
                 const toEditMode = () => {
+                    section.classList.add('is-editing');
                     initCommentEditor(Number(criteriaId));
                     if (view) view.style.display = 'none';
                     editorBox = editorBox || section.querySelector('.trumbowyg-box') ||
@@ -1201,6 +1207,17 @@
                         editorBox.style.opacity = '1';
                         try {
                             const focusEl = editorBox.querySelector('.trumbowyg-editor');
+                            if (focusEl) {
+                                focusEl.addEventListener('dragover', (e) => {
+                                    if (!section.classList.contains('is-editing')) return;
+                                    e.preventDefault();
+                                });
+                                focusEl.addEventListener('drop', (e) => {
+                                    if (!section.classList.contains('is-editing')) return;
+                                    e.preventDefault();
+                                    insertImageFiles(e.dataTransfer?.files);
+                                });
+                            }
                             focusEl?.setAttribute('contenteditable', 'true');
                             focusEl?.focus();
                         } catch (_) {}
@@ -1208,12 +1225,16 @@
                         editor.style.display = '';
                         try { editor.focus(); } catch (_) {}
                     }
+                    lastActiveEditor = window.$ ? $(editor) : null;
+                    lastActiveTextarea = editor;
                     editBtn.style.display = 'none';
                     if (saveBtn) saveBtn.style.display = '';
                     if (cancelBtn) cancelBtn.style.display = '';
+                    if (imageBtn) imageBtn.style.display = '';
                 };
 
                 const toViewMode = () => {
+                    section.classList.remove('is-editing');
                     if (view) view.style.display = '';
                     editor.style.display = 'none';
                     if (!editorBox) editorBox = section.querySelector('.trumbowyg-box');
@@ -1225,6 +1246,7 @@
                     editBtn.style.display = '';
                     if (saveBtn) saveBtn.style.display = 'none';
                     if (cancelBtn) cancelBtn.style.display = 'none';
+                    if (imageBtn) imageBtn.style.display = 'none';
                 };
 
                 editBtn.addEventListener('click', () => toEditMode());
@@ -1274,6 +1296,64 @@
                         saveBtn.disabled = false; editBtn.disabled = false; if (cancelBtn) cancelBtn.disabled = false;
                     }
                 });
+
+                if (imageBtn && imageInput) {
+                    imageBtn.addEventListener('click', () => imageInput.click());
+                    imageInput.addEventListener('change', () => {
+                        const file = imageInput.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = function(ev) {
+                            const html = `<img src="${ev.target.result}">`;
+                            try {
+                                if (window.$ && $(editor).trumbowyg) {
+                                    $(editor).trumbowyg('execCmd', { cmd: 'insertHTML', param: html });
+                                } else {
+                                    editor.value = (editor.value || '') + html;
+                                }
+                            } catch (_) {}
+                        };
+                        reader.readAsDataURL(file);
+                        imageInput.value = '';
+                    });
+                }
+
+                const insertImageFiles = (files) => {
+                    if (!files || !files.length) return;
+                    Array.from(files).forEach(file => {
+                        if (!file.type || !file.type.startsWith('image/')) return;
+                        const reader = new FileReader();
+                        reader.onload = function(ev) {
+                            const html = `<img src="${ev.target.result}">`;
+                            try {
+                                if (window.$ && $(editor).trumbowyg) {
+                                    $(editor).trumbowyg('execCmd', { cmd: 'insertHTML', param: html });
+                                } else {
+                                    editor.value = (editor.value || '') + html;
+                                }
+                            } catch (_) {}
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                };
+
+                const bindDragDrop = (el) => {
+                    if (!el) return;
+                    el.addEventListener('dragover', (e) => {
+                        if (!section.classList.contains('is-editing')) return;
+                        e.preventDefault();
+                    });
+                    el.addEventListener('drop', (e) => {
+                        if (!section.classList.contains('is-editing')) return;
+                        e.preventDefault();
+                        insertImageFiles(e.dataTransfer?.files);
+                    });
+                };
+
+                bindDragDrop(section);
+                bindDragDrop(editor);
+                const trumboEditor = section.querySelector('.trumbowyg-editor');
+                bindDragDrop(trumboEditor);
             });
         });
     </script>
@@ -1325,6 +1405,7 @@
                 };
 
                 const toEditMode = () => {
+                    section.classList.add('is-editing');
                     ensureEditor();
                     if (view) view.style.display = 'none';
                     editor.style.display = '';
@@ -1340,6 +1421,7 @@
                     if (cancelBtn) cancelBtn.style.display = '';
                 };
                 const toViewMode = () => {
+                    section.classList.remove('is-editing');
                     if (view) view.style.display = '';
                     editor.style.display = 'none';
                     if (!editorBox) editorBox = section.querySelector('.trumbowyg-box');
@@ -2172,8 +2254,14 @@
             min-height: 160px;
         }
 
+        .criteria-detail:not(.is-editing) .trumbowyg-box,
+        .criteria-comment:not(.is-editing) .trumbowyg-box {
+            display: none !important;
+        }
+
         .trumbowyg-editor img,
-        .criteria-detail-view img {
+        .criteria-detail-view img,
+        .criteria-comment-view img {
             max-width: none;
             height: auto;
         }
