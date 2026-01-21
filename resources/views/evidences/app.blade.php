@@ -266,6 +266,9 @@
     <!-- มุมมองแบบกลุ่ม -->
     <div id="groupedView" class="indicator-groups view-hidden">
         <div class="grouped-report">
+            @php
+                $showNotifyColumn = auth()->user()?->can('edit-indicator');
+            @endphp
             <table class="grouped-report-table">
                 <thead>
                     <tr>
@@ -276,7 +279,9 @@
                         <th colspan="2">เอกสารแนบ</th>
                         <th rowspan="2">สถานะการรับรองเอกสาร</th>
                         <th rowspan="2">ติดตามเอกสารแนบ</th>
-                        <th rowspan="2">แจ้งเตือน</th>
+                        @if ($showNotifyColumn)
+                            <th rowspan="2">แจ้งเตือน</th>
+                        @endif
                         <th rowspan="2">ข้อเสนอแนะ/ข้อคิดเห็น</th>
                     </tr>
                     <tr>
@@ -384,8 +389,8 @@
                                     <span class="status-badge {{ $docClass }}">{{ $docStatus }}</span>
                                 </td>
                                 <td class="follow-cell">ไม่มีเกณฑ์ย่อย</td>
-                                <td class="text-center">
-                                    @can('edit-indicator')
+                                @if ($showNotifyColumn)
+                                    <td class="text-center">
                                         @if ($docStatus !== 'ครบ')
                                             <form method="POST" action="{{ route('notify', ['id' => $indicator->id]) }}">
                                                 @csrf
@@ -396,10 +401,8 @@
                                         @else
                                             -
                                         @endif
-                                    @else
-                                        -
-                                    @endcan
-                                </td>
+                                    </td>
+                                @endif
                                 <td>-</td>
                             </tr>
                         @else
@@ -508,42 +511,29 @@
                                                 </a>
                                             @endif
                                         @endif
-                                        {{-- @can('edit-indicator')
-                                            @if ($cLabel !== 'ครบ')
-                                                <form method="POST" action="{{ route('notify', ['id' => $indicator->id]) }}" class="mt-2">
+                                 
+                                    </td>
+                                    @if ($loop->first && $showNotifyColumn)
+                                        <td class="text-center" rowspan="{{ $rowspan }}">
+                                            @if ($docStatus !== 'ครบ')
+                                                <form method="POST" action="{{ route('notify', ['id' => $indicator->id]) }}">
                                                     @csrf
                                                     <button type="submit" class="btn btn-primary btn-sm">
-                                                        <i class="fa fa-paper-plane"></i> แจ้งเตือนผู้รับผิดชอบ
+                                                        <i class="fa fa-paper-plane"></i> แจ้งเตือน
                                                     </button>
                                                 </form>
-                                            @endif
-                                        @endcan --}}
-                                    </td>
-                                    @if ($loop->first)
-                                        <td class="text-center" rowspan="{{ $rowspan }}">
-                                            @can('edit-indicator')
-                                                @if ($docStatus !== 'ครบ')
-                                                    <form method="POST" action="{{ route('notify', ['id' => $indicator->id]) }}">
-                                                        @csrf
-                                                        <button type="submit" class="btn btn-primary btn-sm">
-                                                            <i class="fa fa-paper-plane"></i> แจ้งเตือน
-                                                        </button>
-                                                    </form>
-                                                @else
-                                                    -
-                                                @endif
                                             @else
                                                 -
-                                            @endcan
+                                            @endif
                                         </td>
                                     @endif
-                                    <td class="comment-cell">{{ strip_tags($criteria->evidence_comment ?? '-') }}</td>
+                                    <td class="comment-cell">{!! $criteria->evidence_comment ?: '-' !!}</td>
                                 </tr>
                             @endforeach
                         @endif
                     @empty
                         <tr>
-                            <td colspan="10" class="criteria-evidence-empty">ไม่มีข้อมูลตัวชี้วัด</td>
+                            <td colspan="{{ $showNotifyColumn ? 10 : 9 }}" class="criteria-evidence-empty">ไม่มีข้อมูลตัวชี้วัด</td>
                         </tr>
                     @endforelse
                 </tbody>

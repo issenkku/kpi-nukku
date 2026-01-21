@@ -138,31 +138,7 @@
                                 {!! $criteria->description !!}
                             </div>
                         @endif
-                        <div class="criteria-feedback mt-3 criteria-comment"
-                             data-criteria-id="{{ $criteria->id }}"
-                             data-store-url="{{ route('dashboardkpi.user.saveVariables', $indicator->id) }}">
-                            <div class="flex items-center justify-between mb-1">
-                                <div class="font-semibold text-gray-800">ข้อเสนอแนะสำหรับหลักฐาน</div>
-                                @if (!$locked)
-                                    <div class="flex gap-2 text-sm">
-                                        <button type="button" class="btn btn-xs btn-outline comment-edit-btn">แก้ไข</button>
-                                        <button type="button" class="btn btn-xs btn-primary comment-save-btn" style="display:none">บันทึก</button>
-                                        <button type="button" class="btn btn-xs btn-outline comment-cancel-btn" style="display:none">ยกเลิก</button>
-                                        <button type="button" class="btn btn-xs btn-outline comment-image-btn" style="display:none">เพิ่มรูป</button>
-                                        <input type="file" class="comment-image-input hidden" accept="image/*">
-                                    </div>
-                                @endif
-                            </div>
-                            <div class="prose max-w-none text-sm text-gray-800 break-words criteria-comment-view">
-                                {!! $criteria->evidence_comment ?: '-' !!}
-                            </div>
-                            @if (!$locked)
-                                <textarea id="commentEditor-{{ $criteria->id }}"
-                                    name="criterias[{{ $criteria->id }}][evidence_comment]"
-                                    class="criteria-comment-editor eu-editor" rows="4" style="display:none"
-                                    form="variables-form">{!! $criteria->evidence_comment !!}</textarea>
-                            @endif
-                        </div>
+                   
 
                         @php
                             $detailEvidence = $criteria->evidences
@@ -352,6 +328,31 @@
                                 </div>
                             @empty
                             @endforelse
+                                 <div class="criteria-feedback mt-3 criteria-comment"
+                             data-criteria-id="{{ $criteria->id }}"
+                             data-store-url="{{ route('dashboardkpi.user.saveVariables', $indicator->id) }}">
+                            <div class="flex items-center justify-between mb-1">
+                                <div class="font-semibold text-gray-800">ข้อเสนอแนะสำหรับหลักฐาน</div>
+                                @if (!$locked)
+                                    <div class="flex gap-2 text-sm">
+                                        <button type="button" class="btn btn-xs btn-outline comment-edit-btn">แก้ไข</button>
+                                        <button type="button" class="btn btn-xs btn-primary comment-save-btn" style="display:none">บันทึก</button>
+                                        <button type="button" class="btn btn-xs btn-outline comment-cancel-btn" style="display:none">ยกเลิก</button>
+                                        <button type="button" class="btn btn-xs btn-outline comment-image-btn" style="display:none">เพิ่มรูป</button>
+                                        <input type="file" class="comment-image-input hidden" accept="image/*">
+                                    </div>
+                                @endif
+                            </div>
+                            <div class="prose max-w-none text-sm text-gray-800 break-words criteria-comment-view">
+                                {!! $criteria->evidence_comment ?: '-' !!}
+                            </div>
+                            @if (!$locked)
+                                <textarea id="commentEditor-{{ $criteria->id }}"
+                                    name="criterias[{{ $criteria->id }}][evidence_comment]"
+                                    class="criteria-comment-editor eu-editor" rows="4" style="display:none"
+                                    form="variables-form">{!! $criteria->evidence_comment !!}</textarea>
+                            @endif
+                        </div>
                         </div>
                         @endif
                     </div>
