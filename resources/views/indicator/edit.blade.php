@@ -390,11 +390,13 @@
                                     <div x-data="{
                                         sequence: i + 1,
                                         prefix: 'criteria[' + i + ']',
-                                        criteriaData: {
+                                        criteriaData: it.data || {
                                             id: it.dbId,
                                             name: it.name,
                                             description: it.description,
-                                            sequence: it.sequence
+                                            sequence: it.sequence,
+                                            evidence_requirements: [],
+                                            required_evidence_total: null
                                         }
                                     }"
                                         x-effect="sequence = i + 1; prefix = 'criteria[' + i + ']'; it.sequence = sequence;">

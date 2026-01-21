@@ -101,12 +101,36 @@
                     <div class="criteria-content">
                         {{-- อัปโหลดหลักฐาน --}}
                         <x-evidence-uploader :criteria="$criteria" :store-route="route('evidences.store')" :locked-statuses="$locked" />
+                        @if ($criteria->evidenceRequirements->isNotEmpty())
+                            @php
+                                $requirements = $criteria->evidenceRequirements->sortBy('sequence');
+                                $approvedTotal = $criteria->evidences->where('status', true)->count();
+                                $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
+                            @endphp
+                            <div class="criteria-requirements">
+                                <div class="criteria-requirements-title">รายการหลักฐานที่ต้องส่ง</div>
+                                <div class="criteria-requirements-list">
+                                    @foreach ($requirements as $req)
+                                        <div class="criteria-requirement">
+                                            <span class="req-name">{{ $req->name }}</span>
+                                        </div>
+                                    @endforeach
+                                </div>
+                                <div class="criteria-requirements-summary">
+                                    ต้องมีทั้งหมด {{ $requiredTotal ?: '-' }} รายการ
+                                    @if ($requiredTotal)
+                                        (อนุมัติแล้ว {{ $approvedTotal }}/{{ $requiredTotal }})
+                                    @endif
+                                </div>
+                            </div>
+                        @endif
                         {{-- คำอธิบายเกณฑ์ --}}
                         @if ($criteria->description)
                             <div class="criteria-description">
                                 {!! $criteria->description !!}
                             </div>
                         @endif
+                      
                         @php
                             // Pick the most recent non-empty detail from evidences of this criteria
                             $detailEvidence = $criteria->evidences
@@ -219,6 +243,9 @@
                                                     </a>
                                                 </span>
                                             @endif
+                                            @if ($evidence->requirement)
+                                                <span class="evidence-requirement">{{ $evidence->requirement->name }}</span>
+                                            @endif
                                         </span>
                                         @if (!$locked)
                                             <button type="button"
@@ -291,12 +318,36 @@
                                             </form>
                                         </x-modal>
                                     </div>
+                                    
                                 </div>
                             @empty
                                 <div class="text-sm text-center text-gray-500 opacity-75">----- ยังไม่มีหลักฐานแนบ
                                     -----
                                 </div>
                             @endforelse
+                        <div class="criteria-feedback criteria-comment"
+                            data-criteria-id="{{ $criteria->id }}"
+                            data-store-url="{{ route('dashboardkpi.admin.saveVariables', $indicator->id) }}">
+                            <div class="flex items-center justify-between mb-1">
+                                <div class="font-semibold text-gray-800">ข้อเสนอแนะสำหรับหลักฐาน</div>
+                                @if (!$locked)
+                                    <div class="flex gap-2 text-sm">
+                                        <button type="button" class="btn btn-xs btn-outline comment-edit-btn">แก้ไข</button>
+                                        <button type="button" class="btn btn-xs btn-primary comment-save-btn" style="display:none">บันทึก</button>
+                                        <button type="button" class="btn btn-xs btn-outline comment-cancel-btn" style="display:none">ยกเลิก</button>
+                                    </div>
+                                @endif
+                            </div>
+                            <div class="prose max-w-none text-sm text-gray-800 break-words criteria-comment-view">
+                                {!! $criteria->evidence_comment ?: '-' !!}
+                            </div>
+                            @if (!$locked)
+                                <textarea id="commentEditor-{{ $criteria->id }}"
+                                    name="criterias[{{ $criteria->id }}][evidence_comment]"
+                                    class="form-textarea criteria-comment-editor eu-editor" rows="4"
+                                    form="variables-form" style="display:none">{!! old("criterias.$criteria->id.evidence_comment", $criteria->evidence_comment) !!}</textarea>
+                            @endif
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -639,8 +690,10 @@
 
 
         document.addEventListener('DOMContentLoaded', function() {
+            const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
             const fileHandlers = {};
             const editorInitialized = {};
+            const commentEditorInitialized = {};
             /*** ---------- File Upload Handler Class ---------- ***/
             class FileUploadHandler {
                 constructor(criteriaId) {
@@ -1048,6 +1101,43 @@
                 }
             }
 
+            function initCommentEditor(criteriaId) {
+                if (typeof $ === 'undefined' || typeof $.fn.trumbowyg === 'undefined') return false;
+                if (commentEditorInitialized[criteriaId]) return true;
+                const selector = `#commentEditor-${criteriaId}`;
+                const $editor = $(selector);
+                if ($editor.length === 0 || $editor.prop('readonly')) return false;
+                try {
+                    if ($editor.data('trumbowyg')) $editor.trumbowyg('destroy');
+                    $editor.trumbowyg({
+                        lang: 'th',
+                        btns: [
+                            ['viewHTML'],
+                            ['undo', 'redo'],
+                            ['formatting'],
+                            ['fontfamily'],
+                            ['fontsize'],
+                            ['foreColor', 'backColor'],
+                            ['strong', 'em', 'del'],
+                            ['link'],
+                            ['unorderedList', 'orderedList'],
+                            ['table'],
+                            ['justifyLeft', 'justifyCenter', 'justifyRight', 'justifyFull'],
+                            ['horizontalRule'],
+                            ['removeformat'],
+                            ['fullscreen']
+                        ],
+                        autogrow: true
+                    });
+                    attachPasteImage($editor, $editor[0]);
+                    commentEditorInitialized[criteriaId] = true;
+                    return true;
+                } catch (error) {
+                    console.error('Error initializing comment editor:', error);
+                    return false;
+                }
+            }
+
             function setupPopupTriggers() {
                 @foreach ($indicator->criterias as $criteria)
                     const btn{{ $criteria->id }} = document.querySelector(
@@ -1082,7 +1172,109 @@
                 new FileUploadHandler({{ $criteria->id }});
                 new URLHandler({{ $criteria->id }});
                 observePopupVisibility({{ $criteria->id }});
+                initCommentEditor({{ $criteria->id }});
             @endforeach
+
+            document.querySelectorAll('.criteria-comment').forEach(section => {
+                const view = section.querySelector('.criteria-comment-view');
+                const editor = section.querySelector('.criteria-comment-editor');
+                const editBtn = section.querySelector('.comment-edit-btn');
+                const saveBtn = section.querySelector('.comment-save-btn');
+                const cancelBtn = section.querySelector('.comment-cancel-btn');
+                const criteriaId = section.getAttribute('data-criteria-id');
+                const storeUrl = section.getAttribute('data-store-url');
+                const statusInput = document.getElementById('status-input');
+
+                if (!editBtn || !editor) return;
+
+                let editorBox = null;
+
+                const toEditMode = () => {
+                    initCommentEditor(Number(criteriaId));
+                    if (view) view.style.display = 'none';
+                    editorBox = editorBox || section.querySelector('.trumbowyg-box') ||
+                        (window.$ ? $(editor).next('.trumbowyg-box')[0] : null);
+                    if (editorBox) {
+                        editor.style.display = 'none';
+                        editorBox.style.display = '';
+                        editorBox.style.visibility = 'visible';
+                        editorBox.style.opacity = '1';
+                        try {
+                            const focusEl = editorBox.querySelector('.trumbowyg-editor');
+                            focusEl?.setAttribute('contenteditable', 'true');
+                            focusEl?.focus();
+                        } catch (_) {}
+                    } else {
+                        editor.style.display = '';
+                        try { editor.focus(); } catch (_) {}
+                    }
+                    editBtn.style.display = 'none';
+                    if (saveBtn) saveBtn.style.display = '';
+                    if (cancelBtn) cancelBtn.style.display = '';
+                };
+
+                const toViewMode = () => {
+                    if (view) view.style.display = '';
+                    editor.style.display = 'none';
+                    if (!editorBox) editorBox = section.querySelector('.trumbowyg-box');
+                    if (editorBox) {
+                        editorBox.style.display = 'none';
+                        editorBox.style.visibility = 'hidden';
+                        editorBox.style.opacity = '0';
+                    }
+                    editBtn.style.display = '';
+                    if (saveBtn) saveBtn.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                };
+
+                editBtn.addEventListener('click', () => toEditMode());
+                cancelBtn?.addEventListener('click', () => {
+                    try {
+                        if (window.$ && $(editor).trumbowyg) {
+                            $(editor).trumbowyg('html', view?.innerHTML || '');
+                        } else if (editor.tagName === 'TEXTAREA') {
+                            editor.value = view?.innerHTML || '';
+                        }
+                    } catch (_) {}
+                    toViewMode();
+                });
+
+                saveBtn?.addEventListener('click', async () => {
+                    let html = editor.value || editor.innerHTML;
+                    try { if (window.$ && $(editor).trumbowyg) html = $(editor).trumbowyg('html'); } catch (e) {}
+                    const payload = {
+                        criterias: {
+                            [criteriaId]: { evidence_comment: html }
+                        }
+                    };
+                    const statusVal = statusInput?.value;
+                    if (statusVal !== undefined) payload.status = statusVal;
+                    try {
+                        saveBtn.disabled = true; editBtn.disabled = true; if (cancelBtn) cancelBtn.disabled = true;
+                        const resp = await fetch(storeUrl, {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRF-TOKEN': csrf,
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ _method: 'PUT', ...payload })
+                        });
+                        if (resp.ok) {
+                            if (view) view.innerHTML = html || '-';
+                            toViewMode();
+                            window.showToast?.('success', 'บันทึกสำเร็จ');
+                        } else {
+                            window.showToast?.('error', 'บันทึกไม่สำเร็จ');
+                        }
+                    } catch (e) {
+                        window.showToast?.('error', 'เกิดข้อผิดพลาดในการบันทึก');
+                    } finally {
+                        saveBtn.disabled = false; editBtn.disabled = false; if (cancelBtn) cancelBtn.disabled = false;
+                    }
+                });
+            });
         });
     </script>
     <script>
@@ -1151,7 +1343,11 @@
                     if (view) view.style.display = '';
                     editor.style.display = 'none';
                     if (!editorBox) editorBox = section.querySelector('.trumbowyg-box');
-                    if (editorBox) editorBox.style.display = 'none';
+                    if (editorBox) {
+                        editorBox.style.display = 'none';
+                        editorBox.style.visibility = 'hidden';
+                        editorBox.style.opacity = '0';
+                    }
                     editBtn.style.display = '';
                     if (saveBtn) saveBtn.style.display = 'none';
                     if (cancelBtn) cancelBtn.style.display = 'none';
@@ -1751,6 +1947,63 @@
             word-break: break-word;
             text-align: left;
 
+        }
+
+        .evidence-requirement {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: #3730a3;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .criteria-requirements {
+            margin: 12px 0;
+            padding: 10px 12px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+        }
+
+        .criteria-requirements-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #111827;
+            margin-bottom: 8px;
+        }
+
+        .criteria-requirements-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .criteria-requirement {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 14px;
+            align-items: center;
+        }
+
+        .criteria-requirement .req-name {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .criteria-requirement .req-count,
+        .criteria-requirement .req-progress {
+            color: #6b7280;
+        }
+
+        .criteria-requirements-summary {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #6b7280;
         }
 
         .evidence-icon {

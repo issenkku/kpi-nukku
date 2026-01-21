@@ -15,6 +15,16 @@ class CriteriaResource extends JsonResource
             'sequence'    => $this->sequence,
             'status'      => $this->status,
             'indicator_id' => $this->indicator_id,
+            'required_evidence_total' => $this->required_evidence_total,
+            'evidence_requirements' => $this->whenLoaded('evidenceRequirements', function () {
+                return $this->evidenceRequirements->map(function ($req) {
+                    return [
+                        'id' => $req->id,
+                        'name' => $req->name,
+                        'sequence' => $req->sequence,
+                    ];
+                })->values();
+            }),
             // Include per-criteria evidences if you want them here too:
             'evidences'   => EvidenceResource::collection($this->whenLoaded('evidences')),
         ];

@@ -240,10 +240,21 @@
                                 @endphp
                                 <td class="{{ $reportClass }}">{!! $detailHtml !== '' ? $detailHtml : '-' !!}</td>
                                 <td>
+                                    @if ($cri->evidenceRequirements->isNotEmpty())
+                                        <div>
+                                            <strong>รายการที่ต้องส่ง:</strong>
+                                            {{ $cri->evidenceRequirements->pluck('name')->filter()->implode(', ') ?: '-' }}
+                                        </div>
+                                    @endif
                                     @if ($cri->evidences->isNotEmpty())
                                         <ul>
                                             @foreach ($cri->evidences as $ev)
-                                                <li>{{ $ev->name }}</li>
+                                                <li>
+                                                    {{ $ev->name }}
+                                                    @if ($ev->requirement)
+                                                        [{{ $ev->requirement->name }}]
+                                                    @endif
+                                                </li>
                                             @endforeach
                                         </ul>
                                     @else

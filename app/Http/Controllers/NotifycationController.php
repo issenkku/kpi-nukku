@@ -12,13 +12,43 @@ class NotifycationController extends Controller
     public function notifyCollectors(Request $request, $id)
     {
         try {
-            $indicator = Indicator::with(['assignments.collectorUser'])->findOrFail($id);
+            $indicator = Indicator::with([
+                'assignments.collectorUser',
+                'criterias.evidenceRequirements',
+                'criterias.evidences',
+            ])->findOrFail($id);
+
+            $missingRequirements = collect();
+            foreach ($indicator->criterias as $criteria) {
+                $requirements = $criteria->evidenceRequirements->sortBy('sequence');
+                if ($requirements->isEmpty()) {
+                    continue;
+                }
+
+                $uploaded = $criteria->evidences ?? collect();
+                $uploadedByReq = $uploaded
+                    ->pluck('criteria_evidence_requirement_id')
+                    ->filter()
+                    ->unique()
+                    ->flip();
+
+                foreach ($requirements as $req) {
+                    if (! $uploadedByReq->has($req->id)) {
+                        $name = trim((string) ($req->name ?? ''));
+                        if ($name !== '') {
+                            $missingRequirements->push($name);
+                        }
+                    }
+                }
+            }
+
+            $missingRequirements = $missingRequirements->unique()->values()->all();
 
             foreach ($indicator->assignments as $assignment) {
                 if ($assignment->collectorUser) {
                     try {
                         $assignment->collectorUser->notify(
-                            new \App\Notifications\IndicatorAssignedNotification($indicator)
+                            new \App\Notifications\IndicatorAssignedNotification($indicator, $missingRequirements)
                         );
                     } catch (Exception $e) {
                         Log::error('Failed to notify user ID: ' . $assignment->collectorUser->id, [
@@ -51,4 +81,3 @@ class NotifycationController extends Controller
         }
     }
 }
-

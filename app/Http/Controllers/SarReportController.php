@@ -858,7 +858,8 @@ class SarReportController extends Controller
             $allIndicators = Indicator::with([
                 'category.standard',
                 'criterias' => fn($q) => $q->orderBy('sequence'),
-                'criterias.evidences',
+                'criterias.evidenceRequirements',
+                'criterias.evidences.requirement',
             ])
                 ->where('year', $report->year)
                 ->join('categories', 'categories.id', '=', 'indicators.categorie_id')
@@ -908,7 +909,8 @@ class SarReportController extends Controller
             $indicators = Indicator::with([
                 'category.standard',
                 'criterias' => fn($q) => $q->orderBy('sequence'),
-                'criterias.evidences'
+                'criterias.evidenceRequirements',
+                'criterias.evidences.requirement'
             ])
                 ->where('year', $report->year)
                 ->join('categories', 'categories.id', '=', 'indicators.categorie_id')

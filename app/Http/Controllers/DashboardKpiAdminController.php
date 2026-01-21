@@ -23,7 +23,9 @@ class DashboardKpiAdminController extends Controller
             'criterias' => function($query) {
                 $query->orderBy('sequence', 'asc');
             },
+            'criterias.evidenceRequirements',
             'criterias.evidences.user.department',
+            'criterias.evidences.requirement',
             'variables',
             'formulas.variables',
             'checklistItems',
@@ -51,8 +53,15 @@ class DashboardKpiAdminController extends Controller
         // criterias
         if ($request->has('criterias')) {
             foreach ($request->criterias as $criteriaId => $criteriaData) {
+                $updateData = [];
                 if (isset($criteriaData['status'])) {
-                    Criteria::where('id', $criteriaId)->update(['status' => $criteriaData['status']]);
+                    $updateData['status'] = $criteriaData['status'];
+                }
+                if (array_key_exists('evidence_comment', $criteriaData)) {
+                    $updateData['evidence_comment'] = $criteriaData['evidence_comment'];
+                }
+                if ($updateData) {
+                    Criteria::where('id', $criteriaId)->update($updateData);
                 }
             }
         }

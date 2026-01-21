@@ -28,7 +28,7 @@ class IndicatorPresetController extends Controller
     public function export($id)
     {
         $indicator = Indicator::with([
-            'criterias',
+            'criterias.evidenceRequirements',
             'variables',
             'formulas.variables',
             'checklistItems',
@@ -51,7 +51,16 @@ class IndicatorPresetController extends Controller
                     'name'        => $c->name,
                     'description' => $c->description,
                     'sequence'    => $c->sequence,
-                  
+                    'required_evidence_total' => $c->required_evidence_total,
+                    'evidence_requirements' => $c->evidenceRequirements
+                        ->sortBy('sequence')
+                        ->map(function ($req) {
+                            return [
+                                'name' => $req->name,
+                                'sequence' => $req->sequence,
+                            ];
+                        })
+                        ->values(),
                 ];
             }),
 
@@ -161,12 +170,23 @@ class IndicatorPresetController extends Controller
 
                 // 2. Criterias
                 foreach ($data['criterias'] ?? [] as $c) {
-                    $indicator->criterias()->create([
+                    $criteria = $indicator->criterias()->create([
                         'name'        => $c['name'] ?? null,
                         'description' => $c['description'] ?? null,
                         'sequence'    => $c['sequence'] ?? 0,
+                        'required_evidence_total' => $c['required_evidence_total'] ?? null,
                         
                     ]);
+                    foreach ($c['evidence_requirements'] ?? [] as $req) {
+                        $name = trim((string) ($req['name'] ?? ''));
+                        if ($name === '') {
+                            continue;
+                        }
+                        $criteria->evidenceRequirements()->create([
+                            'name' => $name,
+                            'sequence' => (int) ($req['sequence'] ?? 1),
+                        ]);
+                    }
                 }
 
                 // 3. Variables
@@ -214,7 +234,7 @@ class IndicatorPresetController extends Controller
         $year = $request->input('year');
 
         $query = Indicator::with([
-            'criterias',
+            'criterias.evidenceRequirements',
             'variables',
             'formulas.variables',
             'checklistItems',
@@ -244,7 +264,14 @@ class IndicatorPresetController extends Controller
                     'name'        => $c->name,
                     'description' => $c->description,
                     'sequence'    => $c->sequence,
-                  
+                    'required_evidence_total' => $c->required_evidence_total,
+                    'evidence_requirements' => $c->evidenceRequirements
+                        ->sortBy('sequence')
+                        ->map(fn($req) => [
+                            'name' => $req->name,
+                            'sequence' => $req->sequence,
+                        ])
+                        ->values(),
                 ]),
                 'variables'    => $indicator->variables->map(fn($v) => [
                     'variable_name' => $v->variable_name,
@@ -284,7 +311,7 @@ class IndicatorPresetController extends Controller
         $targetYear = (int) $validated['target_year'];
 
         $indicators = Indicator::with([
-                'criterias',
+                'criterias.evidenceRequirements',
                 'variables',
                 'formulas.variables',
                 'checklistItems',
@@ -328,12 +355,19 @@ class IndicatorPresetController extends Controller
 
                 // 2) Criterias
                 foreach ($indicator->criterias as $c) {
-                    $copy->criterias()->create([
+                    $criteriaCopy = $copy->criterias()->create([
                         'name'        => $c->name,
                         'description' => $c->description,
                         'sequence'    => $c->sequence,
+                        'required_evidence_total' => $c->required_evidence_total,
                         // status/report intentionally not copied to reset workflow content
                     ]);
+                    foreach ($c->evidenceRequirements as $req) {
+                        $criteriaCopy->evidenceRequirements()->create([
+                            'name' => $req->name,
+                            'sequence' => $req->sequence,
+                        ]);
+                    }
                 }
 
                 // 3) Variables (keep a map by label_name)

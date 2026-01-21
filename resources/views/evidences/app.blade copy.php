@@ -265,295 +265,164 @@
 
     <!-- มุมมองแบบกลุ่ม -->
     <div id="groupedView" class="indicator-groups view-hidden">
-        <div class="grouped-report">
-            <table class="grouped-report-table">
-                <thead>
-                    <tr>
-                        <th rowspan="2">ด้าน</th>
-                        <th rowspan="2">มาตรฐาน</th>
-                        <th rowspan="2">ชื่อตัวชี้วัด</th>
-                        <th rowspan="2">ผู้รับผิดชอบ</th>
-                        <th colspan="2">เอกสารแนบ</th>
-                        <th rowspan="2">สถานะการรับรองเอกสาร</th>
-                        <th rowspan="2">ติดตามเอกสารแนบ</th>
-                        <th rowspan="2">แจ้งเตือน</th>
-                        <th rowspan="2">ข้อเสนอแนะ/ข้อคิดเห็น</th>
-                    </tr>
-                    <tr>
-                        <th>มี/ครบ</th>
-                        <th>ไม่/ไม่ครบ</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @forelse ($indicatorGroups ?? [] as $indicator)
+        @forelse ($indicatorGroups ?? [] as $indicator)
+            @php
+                $criterias = $indicator->criterias ?? collect();
+                $hasAnyEvidence = false;
+                $allComplete = true;
+                foreach ($criterias as $criteria) {
+                    $uploaded = $criteria->evidences ?? collect();
+                    if ($uploaded->isNotEmpty()) {
+                        $hasAnyEvidence = true;
+                    }
+                    $requirements = $criteria->evidenceRequirements->sortBy('sequence');
+                    if ($requirements->isNotEmpty()) {
+                        $uploadedByReq = $uploaded
+                            ->pluck('criteria_evidence_requirement_id')
+                            ->filter()
+                            ->unique()
+                            ->flip();
+                        $criteriaComplete = $requirements->every(function ($req) use ($uploadedByReq) {
+                            return $uploadedByReq->has($req->id);
+                        });
+                    } else {
+                        $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
+                        $criteriaComplete = $requiredTotal > 0
+                            ? $uploaded->count() >= $requiredTotal
+                            : $uploaded->count() > 0;
+                    }
+                    if (! $criteriaComplete) {
+                        $allComplete = false;
+                    }
+                }
+                $docStatus = ! $hasAnyEvidence
+                    ? 'รอดำเนินการ'
+                    : ($allComplete ? 'ครบ' : 'ไม่ครบ');
+                $docClass = match ($docStatus) {
+                    'ครบ' => 'status-completed',
+                    'ไม่ครบ' => 'status-error',
+                    default => 'status-warning',
+                };
+                $indicatorUrl = route('dashboardkpi.admin.show', [
+                    'id' => $indicator->id,
+                    'is_assigned' => true,
+                ]);
+            @endphp
+            <div class="indicator-card-group">
+                <button type="button" class="indicator-toggle" data-target="indicator-{{ $indicator->id }}">
+                    <div class="indicator-main">
+                        <div class="indicator-title">
+                            <a href="{{ $indicatorUrl }}" class="indicator-link" onclick="event.stopPropagation();">
+                                <span class="indicator-code">[{{ $indicator->code ?? '-' }}]</span>
+                                {{-- <span>{{ $indicator->name ?? '-' }}</span> --}}
+                                  <span 
+                                title="ไปยังตัวบ่งชี้{{ $indicator->name }}"
+                                class="text-xs text-pretty sm:text-sm text-gray-700 hover:text-red-600 cursor-pointer">{{ $indicator->name ?? '-' }}</span>
+                            </a>
+                        </div>
+                        <div class="indicator-meta">
+                            <span class="status-badge {{ $docClass }}">{{ $docStatus }}</span>
+                            <span class="indicator-standard">
+                                {{ $indicator->category->standard->name ?? '-' }} • {{ $indicator->category->name ?? '-' }} • {{ $indicator->year ?? '-' }}
+                            </span>
+                        </div>
+                    </div>
+                    <span class="indicator-chevron">▼</span>
+                </button>
+                <div id="indicator-{{ $indicator->id }}" class="indicator-panel hidden">
+                    @forelse ($indicator->criterias as $criteria)
                         @php
-                            $criterias = $indicator->criterias ?? collect();
-                            $rowspan = max($criterias->count(), 1);
-                            $hasAnyEvidence = false;
-                            $allComplete = true;
-                            foreach ($criterias as $criteria) {
-                                $uploaded = $criteria->evidences ?? collect();
-                                if ($uploaded->isNotEmpty()) {
-                                    $hasAnyEvidence = true;
-                                }
-                                $requirements = $criteria->evidenceRequirements->sortBy('sequence');
-                                if ($requirements->isNotEmpty()) {
-                                    $uploadedByReq = $uploaded
-                                        ->pluck('criteria_evidence_requirement_id')
-                                        ->filter()
-                                        ->unique()
-                                        ->flip();
-                                    $criteriaComplete = $requirements->every(function ($req) use ($uploadedByReq) {
-                                        return $uploadedByReq->has($req->id);
-                                    });
-                                } else {
-                                    $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
-                                    $criteriaComplete = $requiredTotal > 0
-                                        ? $uploaded->count() >= $requiredTotal
-                                        : $uploaded->count() > 0;
-                                }
-                                if (! $criteriaComplete) {
-                                    $allComplete = false;
-                                }
-                            }
-                            $docStatus = ! $hasAnyEvidence
-                                ? 'รอดำเนินการ'
-                                : ($allComplete ? 'ครบ' : 'ไม่ครบ');
-                            $docClass = match ($docStatus) {
-                                'ครบ' => 'status-completed',
-                                'ไม่ครบ' => 'status-error',
-                                default => 'status-warning',
-                            };
-                            $indicatorUrl = route('dashboardkpi.admin.show', [
-                                'id' => $indicator->id,
-                                'is_assigned' => true,
-                            ]);
-                            $collectorName = $indicator->assignments->first()?->collectorUser?->display_name ?? '-';
-                            $deptName = $indicator->assignments->first()?->collectorUser?->department?->name ?? '-';
-                            $indicatorTooltip = 'ไปยัง ' . trim(strip_tags($indicator->name ?? ''));
-                            $indicatorTypes = $indicator->criterias
-                                ->flatMap(fn($c) => $c->evidences?->pluck('type') ?? collect())
-                                ->filter()
-                                ->unique()
-                                ->values()
-                                ->implode('|');
-                            $criteriaNames = $indicator->criterias->map(
-                                fn($c) => trim(strip_tags((string) ($c->name ?? '')))
-                            );
-                            $reqNames = $indicator->criterias->flatMap(
-                                fn($c) => $c->evidenceRequirements->pluck('name')->filter()
-                            );
-                            $searchParts = array_filter([
-                                $indicator->code ?? '',
-                                $indicator->name ?? '',
-                                $indicator->year ?? '',
-                                $indicator->category->name ?? '',
-                                $indicator->category->standard->name ?? '',
-                                $collectorName,
-                                $deptName,
-                                ...$criteriaNames->all(),
-                                ...$reqNames->all(),
-                            ], fn($val) => trim((string) $val) !== '');
-                            $indicatorSearch = trim(preg_replace('/\s+/', ' ', implode(' ', $searchParts)));
+                            $requirements = $criteria->evidenceRequirements->sortBy('sequence');
+                            $uploaded = $criteria->evidences;
+                            $uploadedByReq = $uploaded->pluck('criteria_evidence_requirement_id')->filter()->unique()->flip();
+                            $evidencesSorted = $uploaded->sortBy(function ($ev) {
+                                $seq = $ev->requirement?->sequence ?? 9999;
+                                $time = $ev->created_at?->timestamp ?? 0;
+                                return sprintf('%04d-%010d', $seq, $time);
+                            });
                         @endphp
-                        @if ($criterias->isEmpty())
-                            <tr data-indicator-id="{{ $indicator->id }}"
-                                data-year="{{ $indicator->year ?? '' }}"
-                                data-standard="{{ $indicator->category->standard->name ?? '' }}"
-                                data-dimension="{{ $indicator->category->name ?? '' }}"
-                                data-collector="{{ $collectorName }}"
-                                data-dept="{{ $deptName }}"
-                                data-types="{{ $indicatorTypes }}"
-                                data-search="{{ $indicatorSearch }}">
-                                <td>{{ $indicator->category->name ?? '-' }}</td>
-                                <td>{{ $indicator->category->standard->name ?? '-' }}</td>
-                                <td>
-                                    <a href="{{ $indicatorUrl }}"
-                                        class="indicator-link{{ $indicatorTooltip !== '' ? ' tooltip' : '' }}"
-                                        @if ($indicatorTooltip !== '') data-tooltip="{{ $indicatorTooltip }}" @endif>
-                                        <span class="indicator-code">[{{ $indicator->code ?? '-' }}]</span>
-                                        {{ $indicator->name ?? '-' }}
-                                    </a>
-                                    <div class="indicator-year">ปี {{ $indicator->year ?? '-' }}</div>
-                                    <span class="status-badge {{ $docClass }}">{{ $docStatus }}</span>
-                                </td>
-                                <td>{{ $collectorName }}</td>
-                                <td class="text-center">-</td>
-                                <td class="text-center">-</td>
-                                <td class="text-center">
-                                    <span class="status-badge {{ $docClass }}">{{ $docStatus }}</span>
-                                </td>
-                                <td class="follow-cell">ไม่มีเกณฑ์ย่อย</td>
-                                <td class="text-center">
-                                    @can('edit-indicator')
-                                        @if ($docStatus !== 'ครบ')
-                                            <form method="POST" action="{{ route('notify', ['id' => $indicator->id]) }}">
-                                                @csrf
-                                                <button type="submit" class="btn btn-primary btn-sm">
-                                                    <i class="fa fa-paper-plane"></i> แจ้งเตือน
-                                                </button>
-                                            </form>
-                                        @else
-                                            -
-                                        @endif
-                                    @else
-                                        -
-                                    @endcan
-                                </td>
-                                <td>-</td>
-                            </tr>
-                        @else
-                            @foreach ($criterias as $criteria)
-                                @php
-                                    $requirements = $criteria->evidenceRequirements->sortBy('sequence');
-                                    $uploaded = $criteria->evidences ?? collect();
-                                    $hasEvidence = $uploaded->isNotEmpty();
-                                    if ($requirements->isNotEmpty()) {
-                                        $uploadedByReq = $uploaded
-                                            ->pluck('criteria_evidence_requirement_id')
-                                            ->filter()
-                                            ->unique()
-                                            ->flip();
-                                        $criteriaComplete = $requirements->every(function ($req) use ($uploadedByReq) {
-                                            return $uploadedByReq->has($req->id);
-                                        });
-                                        $evidencesByReq = $uploaded->groupBy('criteria_evidence_requirement_id');
-                                    } else {
-                                        $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
-                                        $criteriaComplete = $requiredTotal > 0
-                                            ? $uploaded->count() >= $requiredTotal
-                                            : $uploaded->count() > 0;
-                                        $uploadedByReq = collect();
-                                        $evidencesByReq = collect();
-                                    }
-                                    $cLabel = ! $hasEvidence ? 'รอดำเนินการ' : ($criteriaComplete ? 'ครบ' : 'ไม่ครบ');
-                                    $cClass = $criteriaComplete ? 'status-completed' : ($hasEvidence ? 'status-error' : 'status-warning');
-                                    $hasIncomplete = $hasEvidence && ! $criteriaComplete;
-                                @endphp
-                                <tr data-indicator-id="{{ $indicator->id }}"
-                                    data-year="{{ $indicator->year ?? '' }}"
-                                    data-standard="{{ $indicator->category->standard->name ?? '' }}"
-                                    data-dimension="{{ $indicator->category->name ?? '' }}"
-                                    data-collector="{{ $collectorName }}"
-                                    data-dept="{{ $deptName }}"
-                                    data-types="{{ $indicatorTypes }}"
-                                    data-search="{{ $indicatorSearch }}">
-                                    @if ($loop->first)
-                                        <td rowspan="{{ $rowspan }}">{{ $indicator->category->name ?? '-' }}</td>
-                                        <td rowspan="{{ $rowspan }}">{{ $indicator->category->standard->name ?? '-' }}</td>
-                                        <td rowspan="{{ $rowspan }}">
-                                            <a href="{{ $indicatorUrl }}"
-                                                class="indicator-link{{ $indicatorTooltip !== '' ? ' tooltip' : '' }}"
-                                                @if ($indicatorTooltip !== '') data-tooltip="{{ $indicatorTooltip }}" @endif>
-                                                <span class="indicator-code">[{{ $indicator->code ?? '-' }}]</span>
-                                                {{ $indicator->name ?? '-' }}
-                                            </a>
-                                            <div class="indicator-year">ปี {{ $indicator->year ?? '-' }}</div>
-                                            <span class="status-badge {{ $docClass }}">{{ $docStatus }}</span>
-                                        </td>
-                                        <td rowspan="{{ $rowspan }}">{{ $collectorName }}</td>
-                                    @endif
-                                    <td class="text-center">
-                                        <span class="check-box {{ $criteriaComplete ? 'is-checked' : '' }}">✓</span>
-                                    </td>
-                                    <td class="text-center">
-                                        <span class="check-box {{ $hasIncomplete ? 'is-checked' : '' }}">✓</span>
-                                    </td>
-                                    <td class="text-center">
-                                        <span class="status-badge {{ $cClass }}">{{ $cLabel }}</span>
-                                    </td>
-                                    <td class="follow-cell">
-                                        {{-- <div class="criteria-title">{{ $criteria->sequence }}. {!! $criteria->name !!}</div> --}}
-                                        @if ($requirements->isNotEmpty())
-                                            <ul class="follow-list">
-                                                @foreach ($requirements as $req)
-                                                    @php
-                                                        $hasReq = $uploadedByReq->has($req->id);
-                                                        $reqKey = $criteria->sequence . '-' . ($req->sequence ?? $loop->iteration);
-                                                        $reqEvidences = $evidencesByReq->get($req->id, collect());
-                                                        $firstEvidence = $reqEvidences->first();
-                                                        $firstEvUrl =
-                                                            $firstEvidence &&
-                                                            ($firstEvidence->type === 'url' && !empty($firstEvidence->path['urls'][0]))
-                                                                ? $firstEvidence->path['urls'][0]
-                                                                : ($firstEvidence ? route('evidences.download', $firstEvidence->id) : null);
-                                                    @endphp
-                                                    <li class="follow-item {{ $hasReq ? 'is-ok' : 'is-missing' }}">
-                                                        @if ($firstEvUrl)
-                                                            <a href="{{ $firstEvUrl }}" target="_blank" rel="noopener noreferrer"
-                                                                class="follow-file-link" aria-label="เปิดเอกสาร {{ $req->name ?? '-' }}"
-                                                                title="เปิดเอกสาร">
-                                                                {{ $reqKey }} {{ $req->name ?? '-' }}
-                                                            </a>
-                                                        @else
-                                                            {{ $reqKey }} {{ $req->name ?? '-' }}
-                                                        @endif
-                                                    </li>
-                                                @endforeach
-                                            </ul>
-                                        @else
-                                            <div class="follow-empty">ไม่มีรายการหลักฐานที่กำหนด</div>
-                                            @if ($uploaded->isNotEmpty())
-                                                @php
-                                                    $firstEvidence = $uploaded->first();
-                                                    $firstEvUrl =
-                                                        $firstEvidence &&
-                                                        ($firstEvidence->type === 'url' && !empty($firstEvidence->path['urls'][0]))
-                                                            ? $firstEvidence->path['urls'][0]
-                                                            : route('evidences.download', $firstEvidence->id);
-                                                @endphp
-                                                <a href="{{ $firstEvUrl }}" target="_blank" rel="noopener noreferrer"
-                                                    class="follow-file-link" aria-label="เปิดเอกสาร" title="เปิดเอกสาร">
-                                                    {{ $criteria->sequence }}. {!! $criteria->name !!}
+                        <div class="criteria-group">
+                            <div class="criteria-header">
+                                <div class="criteria-name">
+                                    {{ $criteria->sequence }}. {!! $criteria->name !!}
+                                </div>
+                                <div class="criteria-status">
+                                    @php
+                                        $cStatus = (int) ($criteria->status ?? 0);
+                                        $cLabel = $cStatus === 1 ? 'ครบ' : ($cStatus === 2 ? 'ไม่ครบ' : 'รอดำเนินการ');
+                                        $cClass = $cStatus === 1 ? 'status-completed' : ($cStatus === 2 ? 'status-error' : 'status-warning');
+                                    @endphp
+                                    <span class="status-badge {{ $cClass }}">{{ $cLabel }}</span>
+                                </div>
+                            </div>
+                            @if ($requirements->isNotEmpty())
+                                <div class="criteria-requirements-list">
+                                    @foreach ($requirements as $req)
+                                        @php
+                                            $isAdded = $uploadedByReq->has($req->id);
+                                        @endphp
+                                        <span class="req-pill {{ $isAdded ? 'req-added' : 'req-missing' }}">
+                                            {{ $req->name ?: '-' }}
+                                            <span class="req-state">{{ $isAdded ? 'เพิ่มแล้ว' : 'ยังไม่เพิ่ม' }}</span>
+                                        </span>
+                                    @endforeach
+                                </div>
+                            @endif
+                            <div class="criteria-evidence-table">
+                                <div class="criteria-evidence-head">
+                                    <div>ชื่อไฟล์</div>
+                                    <div class="text-center">ขนาด</div>
+                                    <div class="text-center">ประเภท</div>
+                                    <div class="text-center">วันที่อัปโหลด</div>
+                                    <div class="text-center">ชื่อผู้อัปโหลด</div>
+                                </div>
+                                @forelse ($evidencesSorted as $ev)
+                                    <div class="criteria-evidence-row">
+                                        <div class="evidence-name">
+                                            @if ($ev->type === 'url' && !empty($ev->path['urls'][0]))
+                                                <a href="{{ $ev->path['urls'][0] }}" target="_blank" rel="noopener noreferrer">
+                                                    {{ $ev->name ?? 'URL' }}
+                                                </a>
+                                            @else
+                                                <a href="{{ route('evidences.download', $ev->id) }}" target="_blank" rel="noopener noreferrer">
+                                                    {{ $ev->name ?? '-' }}
                                                 </a>
                                             @endif
-                                        @endif
-                                        {{-- @can('edit-indicator')
-                                            @if ($cLabel !== 'ครบ')
-                                                <form method="POST" action="{{ route('notify', ['id' => $indicator->id]) }}" class="mt-2">
-                                                    @csrf
-                                                    <button type="submit" class="btn btn-primary btn-sm">
-                                                        <i class="fa fa-paper-plane"></i> แจ้งเตือนผู้รับผิดชอบ
-                                                    </button>
-                                                </form>
+                                            @if ($ev->requirement)
+                                                <span class="evidence-req-tag">{{ $ev->requirement->name }}</span>
                                             @endif
-                                        @endcan --}}
-                                    </td>
-                                    @if ($loop->first)
-                                        <td class="text-center" rowspan="{{ $rowspan }}">
-                                            @can('edit-indicator')
-                                                @if ($docStatus !== 'ครบ')
-                                                    <form method="POST" action="{{ route('notify', ['id' => $indicator->id]) }}">
-                                                        @csrf
-                                                        <button type="submit" class="btn btn-primary btn-sm">
-                                                            <i class="fa fa-paper-plane"></i> แจ้งเตือน
-                                                        </button>
-                                                    </form>
-                                                @else
-                                                    -
-                                                @endif
-                                            @else
-                                                -
-                                            @endcan
-                                        </td>
-                                    @endif
-                                    <td class="comment-cell">{{ strip_tags($criteria->evidence_comment ?? '-') }}</td>
-                                </tr>
-                            @endforeach
-                        @endif
+                                        </div>
+                                        <div class="text-center">
+                                            @php
+                                                $evSize = '-';
+                                                if (!empty($ev->path['files'][0]['size'])) {
+                                                    $evSize = round(($ev->path['files'][0]['size'] ?? 0) / 1024, 2) . ' KB';
+                                                }
+                                            @endphp
+                                            {{ $evSize }}
+                                        </div>
+                                        <div class="text-center">{{ $ev->type ?? '-' }}</div>
+                                        <div class="text-center">{{ optional($ev->created_at)->format('M d, Y') ?? '-' }}</div>
+                                        <div class="text-center">{{ $ev->user->display_name ?? '-' }}</div>
+                                    </div>
+                                @empty
+                                    <div class="criteria-evidence-empty">ยังไม่มีหลักฐานที่เพิ่ม</div>
+                                @endforelse
+                            </div>
+                        </div>
                     @empty
-                        <tr>
-                            <td colspan="10" class="criteria-evidence-empty">ไม่มีข้อมูลตัวชี้วัด</td>
-                        </tr>
+                        <div class="criteria-evidence-empty">ไม่มีเกณฑ์ย่อย</div>
                     @endforelse
-                </tbody>
-            </table>
-        </div>
+                </div>
+            </div>
+        @empty
+            <div class="criteria-evidence-empty">ไม่มีข้อมูลตัวชี้วัด</div>
+        @endforelse
     </div>
 
     <!-- ตารางเอกสารและหลักฐาน -->
-    <div id="tableView" class="border border-gray-200 rounded-lg ">
-        <table id="evidenceTable" class="w-full min-w-full ">
+    <div id="tableView" class="border border-gray-200 rounded-lg overflow-x-auto">
+        <table id="evidenceTable" class="w-full min-w-full overflow-x-auto">
             <thead>
                 <tr>
                     <th class="w-fit text-xs sm:text-sm font-medium text-gray-900 cursor-pointer select-none hidden sm:table-cell"
@@ -846,9 +715,9 @@
             const groupedView = document.getElementById('groupedView');
             const tableView = document.getElementById('tableView');
             const toggleBtn = document.getElementById('view-toggle');
-            let groupedActive = false;
 
             if (toggleBtn && groupedView && tableView) {
+                let groupedActive = false;
                 groupedView.classList.add('view-hidden');
                 tableView.classList.remove('view-hidden');
                 toggleBtn.querySelector('span').textContent = 'มุมมองแบบกลุ่ม';
@@ -857,9 +726,6 @@
                     groupedView.classList.toggle('view-hidden', !groupedActive);
                     tableView.classList.toggle('view-hidden', groupedActive);
                     toggleBtn.querySelector('span').textContent = groupedActive ? 'มุมมองตาราง' : 'มุมมองแบบกลุ่ม';
-                    if (groupedActive) {
-                        applyGroupedFilters();
-                    }
                 });
             }
 
@@ -878,16 +744,10 @@
                 .on('input', function() {
                     clearTimeout(timer);
                     const val = this.value;
-                    timer = setTimeout(() => {
-                        table.search(val).draw();
-                        if (groupedActive) applyGroupedFilters();
-                    }, 150);
+                    timer = setTimeout(() => table.search(val).draw(), 150);
                 })
                 .on('search', function() {
-                    if (this.value === '') {
-                        table.search('').draw();
-                        if (groupedActive) applyGroupedFilters();
-                    }
+                    if (this.value === '') table.search('').draw();
                 });
 
             // --- Dropdown toggles ---
@@ -940,58 +800,6 @@
             // --- Filtering ---
             let activeFilters = {};
 
-            function applyGroupedFilters() {
-                if (!groupedView) return;
-                const rows = Array.from(groupedView.querySelectorAll('tbody tr[data-indicator-id]'));
-                if (!rows.length) return;
-
-                const groupedMap = new Map();
-                rows.forEach(row => {
-                    const id = row.dataset.indicatorId || '';
-                    if (!groupedMap.has(id)) groupedMap.set(id, []);
-                    groupedMap.get(id).push(row);
-                });
-
-                const searchVal = String($('#custom-search').val() || '').toLowerCase().trim();
-                const colMap = {
-                    '8': 'year',
-                    '9': 'standard',
-                    '10': 'dimension',
-                    '5': 'collector',
-                    '12': 'dept',
-                    '3': 'types'
-                };
-
-                groupedMap.forEach(groupRows => {
-                    const data = groupRows[0]?.dataset || {};
-                    let matched = true;
-
-                    for (const column in activeFilters) {
-                        const values = activeFilters[column] || [];
-                        if (!values.length) continue;
-                        const key = colMap[column];
-                        if (!key) continue;
-                        const hay = String(data[key] || '').toLowerCase();
-                        if (!hay) {
-                            matched = false;
-                            break;
-                        }
-                        const ok = values.some(v => hay.includes(String(v).toLowerCase()));
-                        if (!ok) {
-                            matched = false;
-                            break;
-                        }
-                    }
-
-                    if (matched && searchVal) {
-                        const hay = String(data.search || '').toLowerCase();
-                        if (!hay.includes(searchVal)) matched = false;
-                    }
-
-                    groupRows.forEach(row => row.classList.toggle('view-hidden', !matched));
-                });
-            }
-
             $('.filter-option').on('change', function() {
                 const column = String($(this).data('column'));
                 const value = String($(this).data('value'));
@@ -1029,7 +837,6 @@
                     'กรองข้อมูล');
                 table.draw();
                 $('#filter-dropdown').addClass('hidden');
-                if (groupedActive) applyGroupedFilters();
             });
 
             // ล้างตัวกรอง
@@ -1046,7 +853,6 @@
                 $('#indicator-label').text('เลือกตัวบ่งชี้');
 
                 table.columns().search('').draw();
-                if (groupedActive) applyGroupedFilters();
             });
 
 
@@ -1592,135 +1398,6 @@
             color: #2563eb;
         }
 
-        .grouped-report {
-            border: 1px solid #cbd5e1;
-            border-radius: 10px;
-            /* overflow-x: auto; */
-            background: #f8fafc;
-        }
-
-        .grouped-report-table {
-            width: 100%;
-            min-width: 1200px;
-            border-collapse: collapse;
-        }
-
-        .grouped-report-table th,
-        .grouped-report-table td {
-            border: 1px solid #cbd5e1;
-            padding: 8px 10px;
-            font-size: 12px;
-            vertical-align: top;
-        }
-
-        .grouped-report-table thead th {
-            background: #fef3c7;
-            color: #1f2937;
-            font-weight: 700;
-            text-align: center;
-        }
-
-        .grouped-report-table tbody td {
-            background: #dbeafe;
-            color: #1f2937;
-        }
-
-        .grouped-report-table .indicator-link {
-            font-weight: 600;
-            color: #1d4ed8;
-            text-decoration: underline;
-        }
-
-        .grouped-report-table .indicator-year {
-            font-size: 11px;
-            color: #475569;
-            margin-top: 4px;
-        }
-
-        .check-box {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 18px;
-            height: 18px;
-            border: 1px solid #1d4ed8;
-            border-radius: 3px;
-            font-size: 12px;
-            color: transparent;
-        }
-
-        .check-box.is-checked {
-            background: #1d4ed8;
-            color: #fff;
-        }
-
-        .follow-cell {
-            min-width: 280px;
-        }
-
-        .criteria-title {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .follow-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .follow-item {
-            padding-left: 8px;
-            border-left: 3px solid #cbd5e1;
-        }
-
-        .follow-item.is-ok {
-            border-color: #16a34a;
-            color: #0f766e;
-        }
-
-        .follow-item.is-missing {
-            border-color: #dc2626;
-            color: #b91c1c;
-        }
-
-        .follow-files {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-top: 3px;
-        }
-
-        .follow-file {
-            background: #e0e7ff;
-            color: #3730a3;
-            padding: 2px 6px;
-            border-radius: 999px;
-            font-size: 10px;
-        }
-
-        .follow-file-link {
-            color: #1d4ed8;
-            font-size: 11px;
-            text-decoration: underline;
-        }
-
-        .follow-file-link:hover {
-            color: #1e40af;
-        }
-
-        .follow-empty {
-            color: #6b7280;
-            font-size: 11px;
-        }
-
-        .comment-cell {
-            min-width: 180px;
-        }
-
         .indicator-meta {
             display: flex;
             align-items: center;
@@ -1867,7 +1544,7 @@
 
             .dataTables_wrapper,
             #evidenceTable_wrapper {
-                /* overflow-x: auto; */
+                overflow-x: auto;
                 -webkit-overflow-scrolling: touch;
             }
 

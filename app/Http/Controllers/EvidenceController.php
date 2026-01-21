@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 
 class EvidenceController extends Controller
@@ -29,9 +30,15 @@ class EvidenceController extends Controller
             'user'
         ]);
 
-        // 🟢 ถ้า role = user → แสดงเฉพาะของตัวเอง
+        // 🟢 ถ้า role = user → แสดงเฉพาะตัวชี้วัดที่มอบหมายให้ + หลักฐานของตัวเอง
         if (auth()->user()->hasRole('user')) {
-            $query->where('user_id', auth()->id());
+            $userId = auth()->id();
+            $query->where(function ($q) use ($userId) {
+                $q->where('user_id', $userId)
+                    ->orWhereHas('criteria.indicator.assignments', function ($assign) use ($userId) {
+                        $assign->where('collector', $userId);
+                    });
+            });
         }
 
         // filter ต่างๆ (optionally)
@@ -95,6 +102,85 @@ class EvidenceController extends Controller
             return $evidence;
         });
 
+        $indicatorIds = $evidences->getCollection()
+            ->map(fn($e) => optional(optional($e->criteria)->indicator)->id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        $indicatorDocStatus = Indicator::with([
+            'criterias.evidenceRequirements',
+            'criterias.evidences' => fn($q) => $q->where('status', true),
+        ])
+            ->whereIn('id', $indicatorIds)
+            ->get()
+            ->mapWithKeys(function ($indicator) {
+                $criterias = $indicator->criterias ?? collect();
+                $hasAnyEvidence = false;
+                $allComplete = $criterias->isNotEmpty();
+
+                foreach ($criterias as $criteria) {
+                    $approved = $criteria->evidences ?? collect();
+                    $approvedCount = $approved->count();
+                    if ($approvedCount > 0) {
+                        $hasAnyEvidence = true;
+                    }
+
+                    $requirements = $criteria->evidenceRequirements ?? collect();
+                    if ($requirements->isNotEmpty()) {
+                        $criteriaComplete = $requirements->every(function ($req) use ($approved) {
+                            return $approved->where('criteria_evidence_requirement_id', $req->id)->isNotEmpty();
+                        });
+                    } else {
+                        $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
+                        $criteriaComplete = $requiredTotal > 0
+                            ? $approvedCount >= $requiredTotal
+                            : $approvedCount > 0;
+                    }
+
+                    if (! $criteriaComplete) {
+                        $allComplete = false;
+                    }
+                }
+
+                $status = ! $hasAnyEvidence
+                    ? 'รอดำเนินการ'
+                    : ($allComplete ? 'ครบ' : 'ไม่ครบ');
+
+                return [$indicator->id => $status];
+            });
+
+        $indicatorGroups = Indicator::with([
+            'criterias' => fn($q) => $q->orderBy('sequence')->orderBy('name'),
+            'criterias.evidenceRequirements',
+            'criterias.evidences.requirement',
+            'criterias.evidences.user',
+            'assignments.collectorUser.department',
+            'category.standard',
+        ])
+            ->whereIn('id', $indicatorIds)
+            ->get()
+            ->sortBy(function ($i) {
+                $code = (string) ($i->code ?? '');
+                $prefix = substr($code, 0, 3);
+                $rank = match ($prefix) {
+                    'NCS' => 1,
+                    'NCO' => 2,
+                    'NCP' => 3,
+                    default => 4,
+                };
+                $num = 999999;
+                $dashPos = strpos($code, '-');
+                if ($dashPos !== false) {
+                    $after = substr($code, $dashPos + 1);
+                    if (preg_match('/^\d+$/', $after)) {
+                        $num = (int) $after;
+                    }
+                }
+                return sprintf('%02d-%06d-%s', $rank, $num, $code);
+            })
+            ->values();
+
         return view('evidences.app', compact(
             'evidences',
             'years',
@@ -104,6 +190,8 @@ class EvidenceController extends Controller
             'collectors',
             'fileTypes',
             'statusList',
+            'indicatorDocStatus',
+            'indicatorGroups',
         ));
     }
 
@@ -140,10 +228,14 @@ class EvidenceController extends Controller
             'files.*'           => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx',
             'file_names'        => 'nullable|array',
             'file_names.*'      => 'nullable|string|max:255',
+            'file_requirement_ids' => 'nullable|array',
+            'file_requirement_ids.*' => 'nullable|integer',
             'additional_urls'   => 'nullable|array',
             'additional_urls.*' => 'nullable|url|max:2048',
             'url_names'         => 'nullable|array',
             'url_names.*'       => 'nullable|string|max:255',
+            'url_requirement_ids' => 'nullable|array',
+            'url_requirement_ids.*' => 'nullable|integer',
             'detail'            => 'nullable|string|max:16777215',
         ]);
 
@@ -154,16 +246,18 @@ class EvidenceController extends Controller
         try {
             $urls     = collect($request->input('additional_urls', []));
             $urlNames = collect($request->input('url_names', []));
+            $urlRequirementIds = collect($request->input('url_requirement_ids', []));
 
             $urlEntries = $urls
-                ->filter(fn($u) => filled($u))
-                ->values()
-                ->map(function ($url, $i) use ($urlNames) {
+                ->map(function ($url, $i) use ($urlNames, $urlRequirementIds) {
                     return [
                         'url'  => $url,
                         'name' => $urlNames->get($i) ?: 'หลักฐาน URL',
+                        'requirement_id' => $urlRequirementIds->get($i),
                     ];
-                });
+                })
+                ->filter(fn($entry) => filled($entry['url']))
+                ->values();
 
             $hasFiles  = $request->hasFile('files');
             $hasUrls   = $urlEntries->isNotEmpty();
@@ -198,6 +292,85 @@ class EvidenceController extends Controller
                 return back()->withErrors([
                     'general' => 'กรุณาตรวจสอบว่าตัวบ่งชี้นี้มีการผูกกับหมวดหมู่และมาตรฐานแล้ว',
                 ]);
+            }
+
+            $requirements = $criteria->evidenceRequirements()->orderBy('sequence')->get();
+            $requiresEvidenceName = $requirements->isNotEmpty();
+            $validRequirementIds = $requirements->pluck('id')->map(fn($id) => (int) $id)->all();
+            $fileRequirementIds = collect($request->input('file_requirement_ids', []));
+            $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
+
+            if ($requiresEvidenceName) {
+                if ($hasFiles) {
+                    foreach ($request->file('files') as $i => $file) {
+                        $rid = (int) ($fileRequirementIds->get($i) ?? 0);
+                        if (!in_array($rid, $validRequirementIds, true)) {
+                            $message = 'กรุณาเลือกชื่อหลักฐานให้ครบถ้วนสำหรับไฟล์ที่อัปโหลด';
+                            if ($request->expectsJson()) {
+                                return response()->json([
+                                    'success' => false,
+                                    'message' => $message,
+                                ], 422);
+                            }
+                            return back()->withInput()->withErrors([
+                                'general' => $message,
+                            ]);
+                        }
+                    }
+                }
+
+                if ($hasUrls) {
+                    foreach ($urlEntries as $entry) {
+                        $rid = (int) ($entry['requirement_id'] ?? 0);
+                        if (!in_array($rid, $validRequirementIds, true)) {
+                            $message = 'กรุณาเลือกชื่อหลักฐานให้ครบถ้วนสำหรับ URL ที่แนบ';
+                            if ($request->expectsJson()) {
+                                return response()->json([
+                                    'success' => false,
+                                    'message' => $message,
+                                ], 422);
+                            }
+                            return back()->withInput()->withErrors([
+                                'general' => $message,
+                            ]);
+                        }
+                    }
+                }
+
+                $incomingCounts = [];
+                if ($hasFiles) {
+                    foreach ($request->file('files') as $i => $file) {
+                        $rid = (int) ($fileRequirementIds->get($i) ?? 0);
+                        if ($rid) {
+                            $incomingCounts[$rid] = ($incomingCounts[$rid] ?? 0) + 1;
+                        }
+                    }
+                }
+                if ($hasUrls) {
+                    foreach ($urlEntries as $entry) {
+                        $rid = (int) ($entry['requirement_id'] ?? 0);
+                        if ($rid) {
+                            $incomingCounts[$rid] = ($incomingCounts[$rid] ?? 0) + 1;
+                        }
+                    }
+                }
+
+                if ($requiredTotal > 0) {
+                    $existingCount = Evidence::where('criteria_id', $criteria->id)->count();
+                    $incoming = array_sum($incomingCounts);
+                    if ($incoming > 0 && $existingCount + $incoming > $requiredTotal) {
+                        $message = 'จำนวนหลักฐานเกินกว่าที่กำหนด (' . $requiredTotal . ' รายการ)';
+                        if ($request->expectsJson()) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => $message,
+                            ], 422);
+                        }
+                        return back()->withInput()->withErrors([
+                            'general' => $message,
+                        ]);
+                    }
+                }
             }
 
             // ใช้ slug กันชื่อไทย/ช่องว่าง
@@ -252,6 +425,9 @@ class EvidenceController extends Controller
                     }
                     $evidence->status      = false;
                     $evidence->criteria_id = $criteria->id;
+                    $evidence->criteria_evidence_requirement_id = $requiresEvidenceName
+                        ? (int) ($fileRequirementIds->get($i) ?? 0)
+                        : null;
                     $evidence->user_id     = Auth::id();
                     $evidence->name        = $customName ?: $originalName; // 🔹 บันทึกชื่อใหม่
                     $evidence->type        = $extension;
@@ -277,6 +453,9 @@ class EvidenceController extends Controller
                     }
                     $evidence->status      = true;
                     $evidence->criteria_id = $criteria->id;
+                    $evidence->criteria_evidence_requirement_id = $requiresEvidenceName
+                        ? (int) ($entry['requirement_id'] ?? 0)
+                        : null;
                     $evidence->user_id     = Auth::id();
                     $evidence->name        = $entry['name'];
                     $evidence->type        = "url";
@@ -302,6 +481,8 @@ class EvidenceController extends Controller
                 $criteria->report = $request->input('detail');
                 $criteria->save();
             }
+
+            $this->refreshCriteriaStatus($criteria);
 
             if ($request->expectsJson()) {
                 return response()->json([
@@ -443,6 +624,7 @@ class EvidenceController extends Controller
 
         try {
             $evidence = Evidence::findOrFail($id);
+            $originalCriteriaId = $evidence->criteria_id;
 
             $updateData = $request->only(['name', 'type', 'detail', 'status', 'criteria_id']);
 
@@ -469,6 +651,14 @@ class EvidenceController extends Controller
                 ]);
             }
 
+            $criteriaId = $updateData['criteria_id'] ?? $evidence->criteria_id;
+            if ($criteriaId) {
+                $this->refreshCriteriaStatus(Criteria::find($criteriaId));
+            }
+            if ($originalCriteriaId && $originalCriteriaId !== $criteriaId) {
+                $this->refreshCriteriaStatus(Criteria::find($originalCriteriaId));
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Evidence updated successfully',
@@ -490,6 +680,7 @@ class EvidenceController extends Controller
     {
         try {
             $evidence = Evidence::findOrFail($id);
+            $criteriaId = $evidence->criteria_id;
 
             // Delete associated files if they exist
             if (is_array($evidence->path) && isset($evidence->path['files'])) {
@@ -501,6 +692,10 @@ class EvidenceController extends Controller
             }
 
             $evidence->delete();
+
+            if ($criteriaId) {
+                $this->refreshCriteriaStatus(Criteria::find($criteriaId));
+            }
 
             // Flash success message to session
             return redirect()->back()->with('success', 'ลบหลักฐานเรียบร้อยแล้ว');
@@ -841,6 +1036,7 @@ class EvidenceController extends Controller
             $evidence = Evidence::findOrFail($id);
             $evidence->update(['status' => !$evidence->status]);
             $evidence->load(['criteria', 'user']);
+            $this->refreshCriteriaStatus($evidence->criteria);
 
             return response()->json([
                 'success' => true,
@@ -854,5 +1050,43 @@ class EvidenceController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    private function refreshCriteriaStatus(?Criteria $criteria): void
+    {
+        if (! $criteria) {
+            return;
+        }
+
+        $totalEvidence = Evidence::where('criteria_id', $criteria->id)->count();
+        $approvedCount = Evidence::where('criteria_id', $criteria->id)
+            ->where('status', true)
+            ->count();
+        $requirements = $criteria->evidenceRequirements()->get();
+        $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
+        if ($requirements->isNotEmpty()) {
+            $approvedByReq = Evidence::where('criteria_id', $criteria->id)
+                ->where('status', true)
+                ->pluck('criteria_evidence_requirement_id')
+                ->filter()
+                ->unique()
+                ->all();
+            $approvedSet = array_fill_keys($approvedByReq, true);
+            $isComplete = $requirements->every(function ($req) use ($approvedSet) {
+                return isset($approvedSet[$req->id]);
+            });
+        } elseif ($requiredTotal > 0) {
+            $isComplete = $approvedCount >= $requiredTotal;
+        } else {
+            $isComplete = $approvedCount > 0;
+        }
+
+        if ($approvedCount === 0) {
+            $criteria->status = 0;
+        } else {
+            $criteria->status = $isComplete ? 1 : 2;
+        }
+
+        $criteria->save();
     }
 }

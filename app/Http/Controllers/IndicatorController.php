@@ -90,7 +90,7 @@ class IndicatorController extends Controller
     {
         $indicator = Indicator::with([
             'category.standard',
-            'criterias',
+            'criterias.evidenceRequirements',
             'variables',
             'formulas',
             'checklistItems',
@@ -145,6 +145,11 @@ class IndicatorController extends Controller
             'criteria.*.sequence' => 'required|integer',
             'criteria.*.name' => 'required|string',
             'criteria.*.description' => 'nullable|string',
+            'criteria.*.required_evidence_total' => 'nullable|integer|min:0',
+            'criteria.*.evidence_requirements' => 'nullable|array',
+            'criteria.*.evidence_requirements.*.id' => 'nullable|integer|exists:criteria_evidence_requirements,id',
+            'criteria.*.evidence_requirements.*.sequence' => 'nullable|integer',
+            'criteria.*.evidence_requirements.*.name' => 'nullable|string|max:255',
 
             // Multi-choice (count-based)
             'multiCounts' => 'nullable|array',
@@ -236,7 +241,7 @@ class IndicatorController extends Controller
 
         $indicator = Indicator::with([
             'category.standard',
-            'criterias',
+            'criterias.evidenceRequirements',
             'variables',
             'formulas',
             'checklistItems',
@@ -304,6 +309,11 @@ class IndicatorController extends Controller
             'criteria.*.sequence' => 'required|integer',
             'criteria.*.name' => 'required|string',
             'criteria.*.description' => 'nullable|string',
+            'criteria.*.required_evidence_total' => 'nullable|integer|min:0',
+            'criteria.*.evidence_requirements' => 'nullable|array',
+            'criteria.*.evidence_requirements.*.id' => 'nullable|integer|exists:criteria_evidence_requirements,id',
+            'criteria.*.evidence_requirements.*.sequence' => 'nullable|integer',
+            'criteria.*.evidence_requirements.*.name' => 'nullable|string|max:255',
 
             // Multi-choice
             'multiCounts' => 'nullable|array',
@@ -553,14 +563,21 @@ class IndicatorController extends Controller
                 'description' => $c['description'] ?? null,
                 'sequence' => (int) ($c['sequence'] ?? 0),
                 'indicator_id' => $indicator->id,
+                'required_evidence_total' => array_key_exists('required_evidence_total', $c) ? (int) $c['required_evidence_total'] : null,
+                'evidence_requirements' => (array) ($c['evidence_requirements'] ?? []),
             ];
         }
-        if (! empty($rows)) {
-            // ถ้าต้องการ timestamps ให้เพิ่ม created_at/updated_at เอง หรือใช้ createMany ผ่าน relation
-            Criteria::insert($rows);
+
+        $count = 0;
+        foreach ($rows as $row) {
+            $requirements = $row['evidence_requirements'] ?? [];
+            unset($row['evidence_requirements']);
+            $criteriaRow = Criteria::create($row);
+            $this->syncEvidenceRequirements($criteriaRow, $requirements);
+            $count++;
         }
 
-        return count($rows);
+        return $count;
     }
 
     /**
@@ -722,6 +739,7 @@ class IndicatorController extends Controller
                 'description' => $c['description'] ?? null,
                 'sequence' => (int) ($c['sequence'] ?? 0),
                 'indicator_id' => $indicator->id,
+                'required_evidence_total' => array_key_exists('required_evidence_total', $c) ? (int) $c['required_evidence_total'] : null,
             ];
 
             if (! empty($c['id'])) {
@@ -732,12 +750,14 @@ class IndicatorController extends Controller
 
                 if ($existingCriteria) {
                     $existingCriteria->update($criteriaData);
+                    $this->syncEvidenceRequirements($existingCriteria, (array) ($c['evidence_requirements'] ?? []));
                     $existingIds[] = $c['id'];
                     $totalCount++;
                 }
             } else {
                 // Create new criteria
                 $newCriteria = Criteria::create($criteriaData);
+                $this->syncEvidenceRequirements($newCriteria, (array) ($c['evidence_requirements'] ?? []));
                 $existingIds[] = $newCriteria->id;
                 $totalCount++;
             }
@@ -747,6 +767,44 @@ class IndicatorController extends Controller
         $indicator->criterias()->whereNotIn('id', $existingIds)->delete();
 
         return $totalCount;
+    }
+
+    private function syncEvidenceRequirements(Criteria $criteria, array $requirements): void
+    {
+        $existingIds = [];
+        $sequence = 1;
+
+        foreach ($requirements as $req) {
+            $name = trim((string) ($req['name'] ?? ''));
+            if ($name === '') {
+                $sequence++;
+                continue;
+            }
+
+            $data = [
+                'name' => $name,
+                'sequence' => (int) ($req['sequence'] ?? $sequence),
+            ];
+
+            if (! empty($req['id'])) {
+                $existing = $criteria->evidenceRequirements()
+                    ->where('id', $req['id'])
+                    ->first();
+                if ($existing) {
+                    $existing->update($data);
+                    $existingIds[] = $existing->id;
+                }
+            } else {
+                $created = $criteria->evidenceRequirements()->create($data);
+                $existingIds[] = $created->id;
+            }
+
+            $sequence++;
+        }
+
+        $criteria->evidenceRequirements()
+            ->whereNotIn('id', $existingIds)
+            ->delete();
     }
 
     /**

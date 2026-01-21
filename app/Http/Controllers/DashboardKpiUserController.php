@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Assignment;
 use App\Models\Indicator;
+use App\Models\Criteria;
 use App\Models\Variable;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -70,7 +71,9 @@ class DashboardKpiUserController extends Controller
             'criterias' => function ($query) {
                 $query->orderBy('sequence', 'asc');
             },
+            'criterias.evidenceRequirements',
             'criterias.evidences.user.department',
+            'criterias.evidences.requirement',
             'variables',
             'formulas.variables',
             'checklistItems',
@@ -117,6 +120,16 @@ class DashboardKpiUserController extends Controller
 
         if ($request->has('status')) {
             $indicator->status = $request->status;
+        }
+
+        if ($request->has('criterias')) {
+            foreach ($request->criterias as $criteriaId => $criteriaData) {
+                if (array_key_exists('evidence_comment', $criteriaData)) {
+                    Criteria::where('id', $criteriaId)->update([
+                        'evidence_comment' => $criteriaData['evidence_comment'],
+                    ]);
+                }
+            }
         }
 
         $indicator->save();

@@ -15,6 +15,8 @@ class Criteria extends Model
         'indicator_id',
         'status',
         'report', // added field
+        'evidence_comment',
+        'required_evidence_total',
     ];
 
     protected $table = 'criterias'; // matches migration
@@ -27,5 +29,10 @@ class Criteria extends Model
     public function evidences()
     {
         return $this->hasMany(Evidence::class, 'criteria_id');
+    }
+
+    public function evidenceRequirements()
+    {
+        return $this->hasMany(CriteriaEvidenceRequirement::class, 'criteria_id');
     }
 }

@@ -335,7 +335,8 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 'criterias' => function ($q) {
                                     $q->orderBy('sequence')->orderBy('name');
                                 },
-                                'criterias.evidences', // ดึงมาหมด
+                                'criterias.evidenceRequirements',
+                                'criterias.evidences.requirement', // ดึงมาหมด
                             ])->whereIn('id', $ids)->get()->keyBy('id');
 
                             // helper: extract plain text from evidence.detail for a criteria
@@ -440,8 +441,20 @@ class IndicatorsExport implements FromCollection, WithEvents
                                         }
                                     }
 
-                                    $evList = $c->evidences->pluck('name')->implode(', ');
-                                    $s->setCellValue("I{$row}", $evList ?: '-');
+                                    $reqList = $c->evidenceRequirements->pluck('name')->filter()->implode(', ');
+                                    $evList = $c->evidences->map(function ($ev) {
+                                        $label = $ev->name ?? '';
+                                        $reqName = $ev->requirement?->name;
+                                        if ($reqName) {
+                                            $label .= ' [' . $reqName . ']';
+                                        }
+                                        return trim($label);
+                                    })->filter()->implode(', ');
+                                    $cellValue = $reqList !== ''
+                                        ? "รายการที่ต้องส่ง: {$reqList}\nหลักฐาน: " . ($evList ?: '-')
+                                        : ($evList ?: '-');
+                                    $s->setCellValue("I{$row}", $cellValue);
+                                    $s->getStyle("I{$row}")->getAlignment()->setWrapText(true);
 
                                     if (!$wroteReport) {
                                         $s->mergeCells("E{$row}:H{$row}");

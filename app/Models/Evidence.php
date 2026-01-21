@@ -19,6 +19,7 @@ class Evidence extends Model
         'detail',
         'status',
         'criteria_id',
+        'criteria_evidence_requirement_id',
         'user_id',
     ];
 
@@ -35,6 +36,11 @@ class Evidence extends Model
     public function criteria()
     {
         return $this->belongsTo(Criteria::class, 'criteria_id');
+    }
+
+    public function requirement()
+    {
+        return $this->belongsTo(CriteriaEvidenceRequirement::class, 'criteria_evidence_requirement_id');
     }
 
     public function user()

@@ -4,6 +4,18 @@
     $cid = data_get($criteria, 'id');
     $criteriaStatus = data_get($criteria, 'status');
     $isLocked = is_array($lockedStatuses) ? in_array($criteriaStatus, $lockedStatuses) : (bool) $lockedStatuses;
+    $requirements = collect(data_get($criteria, 'evidenceRequirements', []))
+        ->sortBy('sequence')
+        ->values();
+    $evidenceItems = data_get($criteria, 'evidences');
+    if (!($evidenceItems instanceof \Illuminate\Support\Collection)) {
+        $evidenceItems = method_exists($criteria, 'evidences')
+            ? $criteria->evidences()->get(['id', 'status', 'criteria_evidence_requirement_id'])
+            : collect();
+    }
+    $existingTotal = (int) $evidenceItems->count();
+    $approvedTotal = (int) $evidenceItems->where('status', true)->count();
+    $requiredTotal = (int) (data_get($criteria, 'required_evidence_total') ?? 0);
 @endphp
 
 <div class="criteria-evidence" x-data="eUploader{{ $cid }}()" x-init="init()">
@@ -43,10 +55,28 @@
                     <!-- Single column content -->
                     <div class="eu-stack">
                         <!-- Upload -->
-                        <div class="eu-block">
+                        {{-- <div class="eu-block">
                             <div class="eu-section-title">รายงานผลการดำเนินงาน</div>
                             <textarea id="detailEditor-{{ $cid }}" name="detail" class="eu-editor" rows="6" aria-label="รายละเอียดหลักฐาน">{!! old('detail', data_get($criteria, 'report') ?? data_get($criteria, 'detail') ?? '') !!}</textarea>
-                        </div>
+                        </div> --}}
+                        @if ($requirements->isNotEmpty())
+                            <div class="eu-block">
+                                <div class="eu-section-title">รายการหลักฐานที่ต้องส่ง</div>
+                                <div class="eu-req-list">
+                                    @foreach ($requirements as $req)
+                                        <div class="eu-req-row">
+                                            <span class="eu-req-name">{{ $req->name }}</span>
+                                        </div>
+                                    @endforeach
+                                </div>
+                                <div class="eu-req-summary">
+                                    ต้องมีทั้งหมด {{ $requiredTotal ?: '-' }} รายการ
+                                    @if ($requiredTotal)
+                                        (อนุมัติแล้ว {{ $approvedTotal }}/{{ $requiredTotal }})
+                                    @endif
+                                </div>
+                            </div>
+                        @endif
                         <div class="eu-block">
                             <div class="eu-dropzone" :class="{ 'is-dragover': dragging }"
                                 @dragenter.prevent="dragging = true" @dragover.prevent="dragging = true"
@@ -76,6 +106,16 @@
                                             <!-- input สำหรับแก้ชื่อไฟล์ -->
                                             <input type="text" class="eu-input eu-file-rename" :name="`file_names[]`" aria-label="ชื่อไฟล์ที่อัปโหลด"
                                                 x-model="f._customName" :placeholder="f.name">
+                                            @if ($requirements->isNotEmpty())
+                                                <select class="eu-input eu-select mt-2" :name="`file_requirement_ids[]`"
+                                                    aria-label="เลือกชื่อหลักฐาน" x-model="f._requirementId"
+                                                    :required="requirements.length">
+                                                    <option value="">-- เลือกชื่อหลักฐาน --</option>
+                                                    <template x-for="req in requirements" :key="req.id">
+                                                        <option :value="req.id" x-text="req.name"></option>
+                                                    </template>
+                                                </select>
+                                            @endif
 
                                             <div class="eu-file-meta pl-2">
                                                 ขนาดไฟล์ : <span x-text="humanSize(f.size)"></span>
@@ -94,28 +134,42 @@
                         <div class="eu-block">
                             <div class="eu-section-title ">แนบลิงก์หลักฐาน</div>
 
-                            @foreach (collect(old('additional_urls', [])) as $u)
-                                @if ($u !== null && $u !== '')
-                                    <div class="eu-url-row is-locked">
-                                        <input type="text" class="eu-input" value="{{ $u }}" readonly
-                                            tabindex="-1">
-                                        <button type="button" class="eu-icon-btn" disabled aria-label="ลบ URL">
-                                            <i data-lucide="lock"></i>
-                                        </button>
-                                    </div>
-                                @endif
-                            @endforeach
+                            <template x-if="urlRows.length">
+                                <div>
+                                    @foreach (collect(old('additional_urls', [])) as $u)
+                                        @if ($u !== null && $u !== '')
+                                            <div class="eu-url-row is-locked">
+                                                <input type="text" class="eu-input" value="{{ $u }}" readonly
+                                                    tabindex="-1">
+                                                <button type="button" class="eu-icon-btn" disabled aria-label="ลบ URL">
+                                                    <i data-lucide="lock"></i>
+                                                </button>
+                                            </div>
+                                        @endif
+                                    @endforeach
 
-                            <template x-for="(row, i) in urlRows" :key="row._id">
-                                <div class="eu-url-row">
-                                    <input type="text" class="eu-input" :name="`url_names[]`" aria-label="ชื่อ URL"
-                                        placeholder="ชื่อหลักฐาน URL" x-model="row.name">
-                                    <input type="url" class="eu-input" :name="`additional_urls[]`" aria-label="ที่อยู่ URL"
-                                        placeholder="วาง URL เพิ่มเติม" x-model="row.url">
-                                    <button type="button" class="eu-icon-btn danger cursor-pointer"
-                                        @click="removeUrl(i)" aria-label="ลบ URL">
-                                        <i data-lucide="x"></i>
-                                    </button>
+                                    <template x-for="(row, i) in urlRows" :key="row._id">
+                                        <div class="eu-url-row" :class="requirements.length ? 'has-req' : ''">
+                                            @if ($requirements->isNotEmpty())
+                                                <select class="eu-input eu-select" :name="`url_requirement_ids[]`"
+                                                    aria-label="เลือกชื่อหลักฐาน URL" x-model="row.requirementId"
+                                                    :required="requirements.length">
+                                                    <option value="">-- เลือกชื่อหลักฐาน --</option>
+                                                    <template x-for="req in requirements" :key="req.id">
+                                                        <option :value="req.id" x-text="req.name"></option>
+                                                    </template>
+                                                </select>
+                                            @endif
+                                            <input type="text" class="eu-input" :name="`url_names[]`" aria-label="ชื่อ URL"
+                                                placeholder="ชื่อหลักฐาน URL" x-model="row.name">
+                                            <input type="url" class="eu-input" :name="`additional_urls[]`"
+                                                aria-label="ที่อยู่ URL" placeholder="วาง URL เพิ่มเติม" x-model="row.url">
+                                            <button type="button" class="eu-icon-btn danger cursor-pointer"
+                                                @click="removeUrl(i)" aria-label="ลบ URL">
+                                                <i data-lucide="x"></i>
+                                            </button>
+                                        </div>
+                                    </template>
                                 </div>
                             </template>
 
@@ -273,6 +327,41 @@
 
         }
 
+        .eu-req-list {
+            display: flex;
+            flex-direction: column;
+            gap: .4rem;
+        }
+
+        .eu-req-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: .5rem 1rem;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: .5rem .75rem;
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .eu-req-name {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .eu-req-count,
+        .eu-req-progress {
+            color: #6b7280;
+        }
+
+        .eu-req-summary {
+            margin-top: .6rem;
+            font-size: 12px;
+            color: #6b7280;
+        }
+
         /* Dropzone */
         .eu-dropzone {
             border: 1.5px dashed #d1d5db;
@@ -373,6 +462,10 @@
             grid-template-columns: 1fr 1fr auto;
             align-items: center;
             margin-bottom: .5rem;
+        }
+
+        .eu-url-row.has-req {
+            grid-template-columns: 1fr 1fr 1fr auto;
         }
 
         .eu-url-row.is-locked input {
@@ -477,6 +570,12 @@
                 dragging: false,
                 files: [],
                 urlRows: [],
+                requirements: @js($requirements->map(fn($req) => [
+                    'id' => $req->id,
+                    'name' => $req->name,
+                ])->values()),
+                existingTotal: @js($existingTotal),
+                requiredTotal: @js($requiredTotal),
 
                 // Safe UUID generator that works without secure context (HTTP)
                 uuid() {
@@ -534,14 +633,7 @@
                                 ['removeformat']
                             ]
                         });
-                        // Ensure at least one URL row exists
-                        if (!this.urlRows.length) {
-                            this.urlRows.push({
-                                _id: this.uuid(),
-                                name: '',
-                                url: ''
-                            });
-                        }
+                        // Start with no URL rows until user adds one
                         this.refreshIcons();
                     });
                 },
@@ -592,6 +684,7 @@
 
                         // 🔹 ตั้งค่า default name = original
                         f._customName = f.name;
+                        f._requirementId = this.defaultRequirementId();
 
                         this.files.push(f);
                     }
@@ -625,7 +718,8 @@
                     this.urlRows.push({
                         _id: this.uuid(),
                         name: '',
-                        url: ''
+                        url: '',
+                        requirementId: this.defaultRequirementId()
                     });
                     this.$nextTick(() => this.refreshIcons());
                 },
@@ -633,8 +727,59 @@
                     this.urlRows.splice(i, 1);
                 },
 
+                defaultRequirementId() {
+                    return this.requirements.length ? String(this.requirements[0].id) : '';
+                },
+
                 beforeSubmit(e) {
                     this.urlRows = this.urlRows.filter(r => (r.name?.trim() || r.url?.trim()));
+
+                    const hasNewEvidence = this.files.length || this.urlRows.length;
+                    if (this.requirements.length && hasNewEvidence) {
+                        const invalid = [];
+
+                        this.files.forEach(f => {
+                            const rid = String(f._requirementId || '');
+                            if (!rid) {
+                                invalid.push('file');
+                                return;
+                            }
+                        });
+
+                        this.urlRows.forEach(r => {
+                            const rid = String(r.requirementId || '');
+                            if (!rid) {
+                                invalid.push('url');
+                                return;
+                            }
+                        });
+
+                        if (invalid.length) {
+                            e.preventDefault();
+                            const message = 'กรุณาเลือกชื่อหลักฐานให้ครบถ้วนก่อนบันทึก';
+                            if (typeof window.showToast === 'function') {
+                                window.showToast('error', message);
+                            } else {
+                                alert(message);
+                            }
+                            return;
+                        }
+
+                        if (this.requiredTotal > 0) {
+                            const incoming = this.files.length + this.urlRows.length;
+                            if (this.existingTotal + incoming > this.requiredTotal) {
+                                e.preventDefault();
+                                const message = `จำนวนหลักฐานเกินกว่าที่กำหนด (${this.requiredTotal} รายการ)`;
+                                if (typeof window.showToast === 'function') {
+                                    window.showToast('error', message);
+                                } else {
+                                    alert(message);
+                                }
+                                return;
+                            }
+                        }
+                    }
+
                     this.syncNativeInput();
                 }
             }

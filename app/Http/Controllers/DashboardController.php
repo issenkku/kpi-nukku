@@ -61,8 +61,9 @@ class DashboardController extends Controller
                 'category.standard:id,name',
                 'assignments.collectorUser' => fn($q) => $q->select('id', 'first_name', 'last_name', 'department_id'),
                 'assignments.collectorUser.department:id,name',
+                'criterias.evidenceRequirements',
+                'criterias.evidences' => fn($q) => $q->where('status', true),
             ])
-            ->withCount(['criterias as criteria_count', 'evidences as evidence_count'])
             ->orderBy('indicators.year', 'asc')
             ->orderByRaw("
             CASE
@@ -76,11 +77,34 @@ class DashboardController extends Controller
             ->orderBy('indicators.code', 'asc')
             ->get()
             ->map(function ($indicator) {
-                $criteriaCount = (int) ($indicator->criteria_count ?? 0);
-                $evidenceCount = (int) ($indicator->evidence_count ?? 0);
-                $indicator->status_doc = $evidenceCount === 0
+                $criterias = $indicator->criterias ?? collect();
+                $hasAnyEvidence = false;
+                $allComplete = $criterias->isNotEmpty();
+
+                foreach ($criterias as $criteria) {
+                    $approved = $criteria->evidences ?? collect();
+                    $approvedCount = $approved->count();
+                    if ($approvedCount > 0) {
+                        $hasAnyEvidence = true;
+                    }
+
+                    $requirements = $criteria->evidenceRequirements ?? collect();
+                    if ($requirements->isNotEmpty()) {
+                        $criteriaComplete = $requirements->every(function ($req) use ($approved) {
+                            return $approved->where('criteria_evidence_requirement_id', $req->id)->isNotEmpty();
+                        });
+                    } else {
+                        $criteriaComplete = $approvedCount > 0;
+                    }
+
+                    if (! $criteriaComplete) {
+                        $allComplete = false;
+                    }
+                }
+
+                $indicator->status_doc = ! $hasAnyEvidence
                     ? 'รอดำเนินการ'
-                    : ($evidenceCount < $criteriaCount ? 'ไม่ครบ' : 'ครบ');
+                    : ($allComplete ? 'ครบ' : 'ไม่ครบ');
                 return $indicator;
             });
 

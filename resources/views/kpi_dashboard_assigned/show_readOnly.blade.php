@@ -108,12 +108,41 @@
                         </div>
                     </div>
                     <div class="criteria-content">
+                        @if ($criteria->evidenceRequirements->isNotEmpty())
+                            @php
+                                $requirements = $criteria->evidenceRequirements->sortBy('sequence');
+                                $approvedTotal = $criteria->evidences->where('status', true)->count();
+                                $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
+                            @endphp
+                            <div class="criteria-requirements">
+                                <div class="criteria-requirements-title">รายการหลักฐานที่ต้องส่ง</div>
+                                <div class="criteria-requirements-list">
+                                    @foreach ($requirements as $req)
+                                        <div class="criteria-requirement">
+                                            <span class="req-name">{{ $req->name }}</span>
+                                        </div>
+                                    @endforeach
+                                </div>
+                                <div class="criteria-requirements-summary">
+                                    ต้องมีทั้งหมด {{ $requiredTotal ?: '-' }} รายการ
+                                    @if ($requiredTotal)
+                                        (อนุมัติแล้ว {{ $approvedTotal }}/{{ $requiredTotal }})
+                                    @endif
+                                </div>
+                            </div>
+                        @endif
                         {{-- คำอธิบายเกณฑ์ --}}
                         @if ($criteria->description)
                             <div class="criteria-description">
                                 {!! $criteria->description !!}
                             </div>
                         @endif
+                        <div class="criteria-feedback mt-3">
+                            <div class="font-semibold text-gray-800 mb-1">ข้อเสนอแนะสำหรับหลักฐาน</div>
+                            <div class="criteria-feedback-text">
+                                {!! $criteria->evidence_comment ?: '-' !!}
+                            </div>
+                        </div>
 
                         @php
                             $detailEvidence = $criteria->evidences
@@ -200,6 +229,9 @@
                                                             id="evidence-name-text-{{ $evidence->id }}">{{ $evidence->name }}</span>
                                                     </a>
                                                 </span>
+                                            @endif
+                                            @if ($evidence->requirement)
+                                                <span class="evidence-requirement">{{ $evidence->requirement->name }}</span>
                                             @endif
                                         </span>
                                     </div>
@@ -541,6 +573,63 @@
             word-break: break-word;
             text-align: left;
 
+        }
+
+        .evidence-requirement {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: #3730a3;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .criteria-requirements {
+            margin: 12px 0;
+            padding: 10px 12px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+        }
+
+        .criteria-requirements-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #111827;
+            margin-bottom: 8px;
+        }
+
+        .criteria-requirements-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .criteria-requirement {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 14px;
+            align-items: center;
+        }
+
+        .criteria-requirement .req-name {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .criteria-requirement .req-count,
+        .criteria-requirement .req-progress {
+            color: #6b7280;
+        }
+
+        .criteria-requirements-summary {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #6b7280;
         }
 
         .evidence-icon {
