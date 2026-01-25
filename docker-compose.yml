@@ -42,8 +42,6 @@ services:
     depends_on:
       app:
         condition: service_started
-      setup:
-        condition: service_completed_successfully
 
   db:
     image: postgres:15-alpine
