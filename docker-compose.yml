@@ -72,6 +72,7 @@ services:
 
   # One-off service to install PHP deps, migrate/seed, and cache configs
   setup:
+    profiles: ["setup"]
     build:
       context: .
       dockerfile: docker/php/Dockerfile
