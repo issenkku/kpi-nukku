@@ -781,6 +781,9 @@ class SarReportController extends Controller
         // Remove characters invalid in XML 1.0 (keep TAB, LF, CR)
         $text = preg_replace('/[^\x09\x0A\x0D\x20-\x{D7FF}\x{E000}-\x{FFFD}\x{10000}-\x{10FFFF}]/u', '', $text);
 
+        // Escape stray ampersands to keep XML well-formed (avoid double-escaping entities)
+        $text = preg_replace('/&(?!#\d+;|#x[0-9A-Fa-f]+;|[A-Za-z][A-Za-z0-9]+;)/', '&amp;', $text);
+
         // Collapse excessive spaces
         $text = preg_replace('/[ \t]+/', ' ', $text);
 
