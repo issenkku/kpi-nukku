@@ -1243,8 +1243,15 @@ class SarReportController extends Controller
             $writer = IOFactory::createWriter($phpWord, 'Word2007');
 
             return response()->streamDownload(function () use ($writer) {
-                $writer->save("php://output");
-            }, $filename);
+                if (ob_get_length()) {
+                    @ob_end_clean();
+                }
+                $writer->save('php://output');
+            }, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'Cache-Control' => 'max-age=0, no-cache, must-revalidate, proxy-revalidate',
+                'Pragma' => 'public',
+            ]);
         }
 
 
