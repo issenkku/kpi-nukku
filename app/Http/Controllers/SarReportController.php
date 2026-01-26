@@ -787,6 +787,20 @@ class SarReportController extends Controller
         return trim($text);
     }
 
+    protected function prepareBinaryDownload(): void
+    {
+        // Disable output compression and clear buffers to avoid corrupting binary streams.
+        if (function_exists('ini_get') && function_exists('ini_set')) {
+            $zlib = ini_get('zlib.output_compression');
+            if (!empty($zlib) && $zlib !== '0') {
+                @ini_set('zlib.output_compression', '0');
+            }
+        }
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
+    }
+
 
     public function export(SarReport $report, $type)
     {
@@ -1243,9 +1257,7 @@ class SarReportController extends Controller
             $writer = IOFactory::createWriter($phpWord, 'Word2007');
 
             return response()->streamDownload(function () use ($writer) {
-                if (ob_get_length()) {
-                    @ob_end_clean();
-                }
+                $this->prepareBinaryDownload();
                 $writer->save('php://output');
             }, $filename, [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
