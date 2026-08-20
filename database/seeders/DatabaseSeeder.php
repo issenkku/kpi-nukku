@@ -13,7 +13,7 @@ class DatabaseSeeder extends Seeder
         try {
             // Align Postgres sequence to MAX(id) so next inserts won't collide
             DB::statement(
-                "SELECT setval(pg_get_serial_sequence('" . $table . "','" . $column . "'), COALESCE((SELECT MAX(" . $column . ") FROM " . $table . "), 0), true)"
+                "SELECT setval(pg_get_serial_sequence('".$table."','".$column."'), COALESCE((SELECT MAX(".$column.') FROM '.$table.'), 0), true)'
             );
         } catch (\Throwable $e) {
             // Ignore for tables without sequences or on non‑pgsql drivers
@@ -31,11 +31,18 @@ class DatabaseSeeder extends Seeder
             $this->realignSequence($t);
         }
     }
+
     /**
      * Seed the application's database.
      */
     public function run(): void
     {
+        if (app()->isProduction()) {
+            throw new \RuntimeException(
+                'DatabaseSeeder contains destructive demo data and is disabled in production. Run RolesAndPermissionsSeeder directly.'
+            );
+        }
+
         // Clear cached roles/permissions
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
 

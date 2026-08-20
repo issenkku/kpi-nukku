@@ -3,11 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Department;
-use Illuminate\Http\Request;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Spatie\Permission\Models\Role;
 use Illuminate\Validation\Rule;
+use Spatie\Permission\Models\Role;
 
 class UserController extends Controller
 {
@@ -16,6 +16,7 @@ class UserController extends Controller
         $users = User::with('department', 'roles')->orderBy('id', 'asc')->get();
         $departments = Department::orderBy('name')->pluck('name'); // รายชื่อหน่วยงาน
         $roles = Role::orderBy('name')->pluck('name');
+
         return view('users.management.app', compact('users', 'departments', 'roles'));
     }
 
@@ -24,6 +25,7 @@ class UserController extends Controller
         $roles = Role::orderBy('name')->pluck('name');
         $users = User::with('department', 'roles')->orderBy('id', 'asc')->get();
         $departments = Department::orderBy('name')->get(['id', 'name']);
+
         return view('users.management.create', compact('departments', 'roles', 'users'));
     }
 
@@ -32,13 +34,13 @@ class UserController extends Controller
         $request->validate([
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
-            'password' => 'required|string|min:6|confirmed',
+            'password' => 'required|string|min:12|confirmed',
             'email' => 'required|email|max:100|unique:users',
             'phone' => 'nullable|string|max:20',
             'department_id' => 'required|integer|exists:departments,id',
             'status' => 'required|in:0,1',
             'role' => 'required|exists:roles,name',
-            
+
             // ฟิลด์เสริม (ทั้งหมดเป็น nullable)
             'title' => 'nullable|string|max:50',
             'positype' => 'nullable|string|max:100',
@@ -52,13 +54,13 @@ class UserController extends Controller
             'title' => $request->title,
             'first_name' => $request->first_name,
             'last_name' => $request->last_name,
-            
+
             // ข้อมูลการทำงาน
             'positype' => $request->positype,
             'workline' => $request->workline,
             'posi' => $request->posi,
             'level' => $request->level,
-            
+
             // ข้อมูลติดต่อและระบบ
             'email' => $request->email,
             'phone' => $request->phone,
@@ -73,7 +75,6 @@ class UserController extends Controller
         return redirect()->route('users.index')->with('success', 'เพิ่มผู้ใช้งานสำเร็จ');
     }
 
-
     // public function show($id)
     // {
     //     $user = User::findOrFail($id);
@@ -85,8 +86,10 @@ class UserController extends Controller
         $user = User::findOrFail($id);
         $departments = Department::orderBy('name')->get();
         $roles = Role::pluck('name');
+
         return view('users.management.edit', compact('user', 'departments', 'roles'));
     }
+
     public function update(Request $request, $id)
     {
         $user = User::findOrFail($id);
@@ -99,8 +102,8 @@ class UserController extends Controller
             'department_id' => ['required', 'integer', 'exists:departments,id'],
             'status' => ['required', 'in:0,1'],
             'role' => ['required', 'exists:roles,name'],
-            'password' => ['nullable', 'confirmed', 'min:8'],
-            
+            'password' => ['nullable', 'string', 'min:12', 'confirmed'],
+
             // ฟิลด์เสริม
             'title' => ['nullable', 'string', 'max:50'],
             'positype' => ['nullable', 'string', 'max:100'],
@@ -114,21 +117,21 @@ class UserController extends Controller
             'title' => $validated['title'] ?? null,
             'first_name' => $validated['first_name'],
             'last_name' => $validated['last_name'],
-            
+
             // ข้อมูลการทำงาน
             'positype' => $validated['positype'] ?? null,
             'workline' => $validated['workline'] ?? null,
             'posi' => $validated['posi'] ?? null,
             'level' => $validated['level'] ?? null,
-            
+
             // ข้อมูลติดต่อและระบบ
             'email' => $validated['email'],
             'phone' => $validated['phone'],
             'department_id' => (int) $validated['department_id'],
             'status' => (bool) $validated['status'],
         ];
-        
-        if (!empty($validated['password'])) {
+
+        if (! empty($validated['password'])) {
             $updateData['password'] = Hash::make($validated['password']);
         }
 
@@ -138,7 +141,6 @@ class UserController extends Controller
         return redirect()->route('users.index')
             ->with('success', $affected ? 'อัปเดตแล้ว' : 'ไม่มีการเปลี่ยนแปลง');
     }
-
 
     public function destroy($id)
     {

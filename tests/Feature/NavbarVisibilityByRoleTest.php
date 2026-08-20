@@ -21,73 +21,74 @@ class NavbarVisibilityByRoleTest extends TestCase
     #[Test]
     public function super_admin_sees_admin_menus(): void
     {
-        $u = User::factory()->create();
-        $u->assignRole('super_admin');
+        $user = User::factory()->create();
+        $user->assignRole('super_admin');
 
-        // Use a page that renders the full layout
-        $resp = $this->actingAs($u, 'sanctum')->get('/users');
-        $resp->assertOk();
+        $response = $this->actingAs($user, 'sanctum')->get('/users');
 
-        $resp->assertSee('Dashboard', false);
-        $resp->assertSee('จัดการตัวชี้วัด', false);
-        $resp->assertSee('ตั้งค่าระบบ', false);
-        $resp->assertSee('จัดการผู้ใช้งาน', false);
-        $resp->assertSee('จัดการหลักฐาน', false);
+        $response->assertOk();
+        $response->assertSeeText('หน้าหลัก');
+        $response->assertSeeText('จัดการตัวบ่งชี้');
+        $response->assertSeeText('ตั้งค่าระบบ');
+        $response->assertSeeText('จัดการผู้ใช้งาน');
+        $response->assertSeeText('จัดการหลักฐาน');
     }
 
     #[Test]
     public function system_admin_sees_settings_menu(): void
     {
-        $u = User::factory()->create();
-        $u->assignRole('system_admin');
-        $resp = $this->actingAs($u, 'sanctum')->get('/users');
-        $resp->assertOk();
+        $user = User::factory()->create();
+        $user->assignRole('system_admin');
 
-        $resp->assertSee('ตั้งค่าระบบ', false);
-        $resp->assertSee('จัดการผู้ใช้งาน', false);
-        $resp->assertSee('จัดการหน่วยงาน', false);
-        $resp->assertSee('จัดการหลักฐาน', false);
+        $response = $this->actingAs($user, 'sanctum')->get('/users');
+
+        $response->assertOk();
+        $response->assertSeeText('ตั้งค่าระบบ');
+        $response->assertSeeText('จัดการผู้ใช้งาน');
+        $response->assertSeeText('จัดการหน่วยงาน');
+        $response->assertSeeText('จัดการหลักฐาน');
     }
 
     #[Test]
     public function qa_admin_sees_review_kpi_but_no_settings_menu(): void
     {
-        $u = User::factory()->create();
-        $u->assignRole('qa_admin');
-        $resp = $this->actingAs($u, 'sanctum')->get('/indicator');
-        $resp->assertOk();
+        $user = User::factory()->create();
+        $user->assignRole('qa_admin');
 
-        $resp->assertSee('จัดการตัวชี้วัด', false);
-        $resp->assertSee('ตรวจสอบตัวชี้วัด', false);
-        $resp->assertDontSee('ตั้งค่าระบบ', false);
+        $response = $this->actingAs($user, 'sanctum')->get('/indicator');
+
+        $response->assertOk();
+        $response->assertSeeText('จัดการตัวบ่งชี้');
+        $response->assertSeeText('ตรวจสอบตัวบ่งชี้');
+        $response->assertDontSeeText('ตั้งค่าระบบ');
     }
 
     #[Test]
     public function administration_admin_cannot_see_settings_menu(): void
     {
-        $u = User::factory()->create();
-        $u->assignRole('administration_admin');
-        $resp = $this->actingAs($u, 'sanctum')->get('/indicator');
-        $resp->assertOk();
+        $user = User::factory()->create();
+        $user->assignRole('administration_admin');
 
-        $resp->assertSee('จัดการตัวชี้วัด', false);
-        $resp->assertDontSee('ตั้งค่าระบบ', false);
+        $response = $this->actingAs($user, 'sanctum')->get('/indicator');
+
+        $response->assertOk();
+        $response->assertSeeText('จัดการตัวบ่งชี้');
+        $response->assertDontSeeText('ตั้งค่าระบบ');
     }
 
     #[Test]
     public function user_sees_user_dashboard_and_my_evidences_only(): void
     {
-        $u = User::factory()->create();
-        $u->assignRole('user');
-        // evidences is allowed for user
-        $resp = $this->actingAs($u, 'sanctum')->get('/evidences');
-        $resp->assertOk();
+        $user = User::factory()->create();
+        $user->assignRole('user');
 
-        $resp->assertSee('Dashboard ผู้ใช้งาน', false);
-        $resp->assertSee('หลักฐานของฉัน', false);
-        $resp->assertDontSee('จัดการผู้ใช้งาน', false);
-        $resp->assertDontSee('ตั้งค่าระบบ', false);
-        $resp->assertDontSee('จัดการตัวชี้วัด', false);
+        $response = $this->actingAs($user, 'sanctum')->get('/evidences');
+
+        $response->assertOk();
+        $response->assertSeeText('หน้าหลัก');
+        $response->assertSeeText('หลักฐานของฉัน');
+        $response->assertDontSeeText('จัดการผู้ใช้งาน');
+        $response->assertDontSeeText('ตั้งค่าระบบ');
+        $response->assertDontSeeText('จัดการตัวบ่งชี้');
     }
 }
-

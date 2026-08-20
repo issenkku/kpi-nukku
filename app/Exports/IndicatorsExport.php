@@ -1,25 +1,23 @@
 <?php
 
 // app/Exports/IndicatorsExport.php
+
 namespace App\Exports;
 
 use App\Models\Indicator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromCollection;
-use Maatwebsite\Excel\Concerns\FromQuery;
-use Maatwebsite\Excel\Concerns\WithHeadings;
-use Maatwebsite\Excel\Concerns\WithMapping;
-use Maatwebsite\Excel\Concerns\ShouldAutoSize;
-use Maatwebsite\Excel\Concerns\WithColumnFormatting;
 use Maatwebsite\Excel\Concerns\WithEvents;
-use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use Maatwebsite\Excel\Events\AfterSheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 
 class IndicatorsExport implements FromCollection, WithEvents
 {
     private $filters;
+
     private array $tempImageFiles = [];
 
     public function __construct(array $filters = [])
@@ -42,21 +40,21 @@ class IndicatorsExport implements FromCollection, WithEvents
                 'indicators.code',
                 'indicators.year',
                 'categories.name as category_name',
-                'standards.name as standard_name'
+                'standards.name as standard_name',
             ])
             ->leftJoin('categories', 'categories.id', '=', 'indicators.categorie_id')
             ->leftJoin('standards', 'standards.id', '=', 'categories.standard_id');
 
         // ===== ฟิลเตอร์ =====
-        if (!empty($this->filters['year'])) {
+        if (! empty($this->filters['year'])) {
             $years = (array) $this->filters['year'];
             $q->whereIn('indicators.year', $years);
         }
 
-        if (!empty($this->filters['standard_id'])) {
+        if (! empty($this->filters['standard_id'])) {
             $std = $this->filters['standard_id'];
-            if (is_numeric($std) && (int)$std > 0) {
-                $q->where('categories.standard_id', (int)$std);
+            if (is_numeric($std) && (int) $std > 0) {
+                $q->where('categories.standard_id', (int) $std);
             } else {
                 // Fallback: allow passing standard name (string)
                 $q->where('standards.name', (string) $std);
@@ -65,10 +63,10 @@ class IndicatorsExport implements FromCollection, WithEvents
 
         // Category filter: support NAME grouping across standards and legacy ID
         $categoryName = $this->filters['category'] ?? $this->filters['category_name'] ?? null;
-        if (!empty($categoryName)) {
+        if (! empty($categoryName)) {
             $names = (array) $categoryName;
-            $names = array_values(array_filter(array_map(fn($v) => trim((string)$v), $names)));
-            if (!empty($names)) {
+            $names = array_values(array_filter(array_map(fn ($v) => trim((string) $v), $names)));
+            if (! empty($names)) {
                 $q->whereIn('categories.name', $names);
             }
         } elseif (array_key_exists('category_id', $this->filters) && $this->filters['category_id'] !== null && $this->filters['category_id'] !== '') {
@@ -77,30 +75,34 @@ class IndicatorsExport implements FromCollection, WithEvents
                 $ids = [];
                 $names = [];
                 foreach ($cat as $c) {
-                    if (is_numeric($c)) $ids[] = (int) $c; else $names[] = trim((string)$c);
+                    if (is_numeric($c)) {
+                        $ids[] = (int) $c;
+                    } else {
+                        $names[] = trim((string) $c);
+                    }
                 }
-                $q->where(function($qq) use ($ids, $names) {
-                    if (!empty($ids)) {
+                $q->where(function ($qq) use ($ids, $names) {
+                    if (! empty($ids)) {
                         $qq->orWhereIn('indicators.categorie_id', $ids);
                     }
-                    if (!empty($names)) {
+                    if (! empty($names)) {
                         $qq->orWhereIn('categories.name', $names);
                     }
                 });
             } else {
-                if (is_numeric($cat) && (int)$cat > 0) {
-                    $q->where('indicators.categorie_id', (int)$cat);
+                if (is_numeric($cat) && (int) $cat > 0) {
+                    $q->where('indicators.categorie_id', (int) $cat);
                 } else {
-                    $q->where('categories.name', trim((string)$cat));
+                    $q->where('categories.name', trim((string) $cat));
                 }
             }
         }
 
-        if (isset($this->filters['status']) && $this->filters['status'] !== '' && (int)$this->filters['status'] >= 0) {
-            $q->where('indicators.status', (int)$this->filters['status']);
+        if (isset($this->filters['status']) && $this->filters['status'] !== '' && (int) $this->filters['status'] >= 0) {
+            $q->where('indicators.status', (int) $this->filters['status']);
         }
 
-        if (!empty($this->filters['code'])) {
+        if (! empty($this->filters['code'])) {
             $code = trim(strtolower($this->filters['code']));
             if (str_contains($code, '%')) {
                 $q->where('indicators.code', 'ILIKE', $code);
@@ -116,9 +118,15 @@ class IndicatorsExport implements FromCollection, WithEvents
                     WHEN indicators.code LIKE 'NCO-%' THEN 3
                     ELSE 99
                 END
-            ")
-            ->orderByRaw("COALESCE(NULLIF(SPLIT_PART(indicators.code, '-', 2), ''), '0')::int ASC")
-            ->orderBy('indicators.code', 'asc');
+            ");
+
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $q->orderByRaw("COALESCE(NULLIF(SPLIT_PART(indicators.code, '-', 2), ''), '0')::int ASC");
+        } else {
+            $q->orderByRaw("CAST(SUBSTR(indicators.code, INSTR(indicators.code, '-') + 1) AS INTEGER) ASC");
+        }
+
+        $q->orderBy('indicators.code', 'asc');
 
         // dd($this->filters, $q->toSql(), $q->getBindings());
         return $q->get()->groupBy('standard_name');
@@ -141,6 +149,7 @@ class IndicatorsExport implements FromCollection, WithEvents
             }
         } catch (\Throwable $e) {
         }
+
         return '';
     }
 
@@ -152,11 +161,12 @@ class IndicatorsExport implements FromCollection, WithEvents
         }
 
         $doc = new \DOMDocument('1.0', 'UTF-8');
-        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        $htmlBody = '<body>'.mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8').'</body>';
         @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         $body = $doc->getElementsByTagName('body')->item(0);
-        if (!$body) {
+        if (! $body) {
             $text = trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
+
             return $text !== '' ? [['type' => 'text', 'text' => $text]] : [];
         }
 
@@ -171,9 +181,12 @@ class IndicatorsExport implements FromCollection, WithEvents
         };
 
         $walk = function ($node) use (&$walk, &$blocks, &$currentText, $flushText) {
-            if (!$node) return;
+            if (! $node) {
+                return;
+            }
             if ($node->nodeType === XML_TEXT_NODE) {
-                $currentText .= ' ' . $node->textContent;
+                $currentText .= ' '.$node->textContent;
+
                 return;
             }
             if ($node->nodeType !== XML_ELEMENT_NODE) {
@@ -187,6 +200,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                 if ($src !== '') {
                     $blocks[] = ['type' => 'image', 'src' => $src];
                 }
+
                 return;
             }
             if ($tag === 'table') {
@@ -204,13 +218,14 @@ class IndicatorsExport implements FromCollection, WithEvents
                         }
                         $cells[] = trim(strip_tags($cell->textContent ?? ''));
                     }
-                    if (!empty($cells)) {
+                    if (! empty($cells)) {
                         $rows[] = $cells;
                     }
                 }
-                if (!empty($rows)) {
+                if (! empty($rows)) {
                     $blocks[] = ['type' => 'table', 'rows' => $rows];
                 }
+
                 return;
             }
 
@@ -234,23 +249,29 @@ class IndicatorsExport implements FromCollection, WithEvents
     private function storeTempImage(string $data, string $ext): ?string
     {
         $ext = preg_replace('/[^a-z0-9]+/i', '', strtolower($ext)) ?: 'png';
-        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('export_img_', true) . '.' . $ext;
+        $tmp = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('export_img_', true).'.'.$ext;
         if (@file_put_contents($tmp, $data) === false) {
             return null;
         }
         $this->tempImageFiles[] = $tmp;
+
         return $tmp;
     }
 
     private function resolveImagePath(string $src): ?string
     {
         $src = trim($src);
-        if ($src === '') return null;
+        if ($src === '') {
+            return null;
+        }
 
         if (preg_match('/^data:image\\/(\\w+);base64,(.+)$/', $src, $m)) {
             $ext = strtolower($m[1]);
             $data = base64_decode($m[2]);
-            if ($data === false) return null;
+            if ($data === false) {
+                return null;
+            }
+
             return $this->storeTempImage($data, $ext);
         }
 
@@ -260,7 +281,10 @@ class IndicatorsExport implements FromCollection, WithEvents
 
         if (filter_var($src, FILTER_VALIDATE_URL)) {
             $data = @file_get_contents($src);
-            if ($data === false) return null;
+            if ($data === false) {
+                return null;
+            }
+
             return $this->storeTempImage($data, 'png');
         }
 
@@ -275,8 +299,6 @@ class IndicatorsExport implements FromCollection, WithEvents
             }
         }
     }
-
-
 
     public function registerEvents(): array
     {
@@ -316,13 +338,13 @@ class IndicatorsExport implements FromCollection, WithEvents
 
                         // หัวตาราง (ปิดใช้งานระดับด้าน; จะสร้างต่อ-ตัวชี้วัดแทน)
                         if (false) {
-                            $s->mergeCells("A{$row}:A" . ($row + 1))->setCellValue("A{$row}", 'ข้อ');
-                            $s->mergeCells("B{$row}:B" . ($row + 1))->setCellValue("B{$row}", 'เกณฑ์มาตรฐาน');
+                            $s->mergeCells("A{$row}:A".($row + 1))->setCellValue("A{$row}", 'ข้อ');
+                            $s->mergeCells("B{$row}:B".($row + 1))->setCellValue("B{$row}", 'เกณฑ์มาตรฐาน');
                             $s->mergeCells("C{$row}:D{$row}")->setCellValue("C{$row}", 'ผลการดำเนินงาน');
-                            $s->setCellValue("C" . ($row + 1), 'มี');
-                            $s->setCellValue("D" . ($row + 1), 'ไม่มี');
-                            $s->mergeCells("E{$row}:E" . ($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
-                            $s->mergeCells("F{$row}:F" . ($row + 1))->setCellValue("F{$row}", 'เอกสาร/หลักฐาน');
+                            $s->setCellValue('C'.($row + 1), 'มี');
+                            $s->setCellValue('D'.($row + 1), 'ไม่มี');
+                            $s->mergeCells("E{$row}:E".($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
+                            $s->mergeCells("F{$row}:F".($row + 1))->setCellValue("F{$row}", 'เอกสาร/หลักฐาน');
                             $row += 2;
                         }
 
@@ -331,7 +353,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                         if ($inds->count() > 0) {
                             // preload criterias (ordered) and evidences (approved only)
                             $ids = $inds->pluck('id')->unique()->values();
-                            $relations = \App\Models\Indicator::with([
+                            $relations = Indicator::with([
                                 'criterias' => function ($q) {
                                     $q->orderBy('sequence')->orderBy('name');
                                 },
@@ -344,23 +366,21 @@ class IndicatorsExport implements FromCollection, WithEvents
 
                             // แล้วค่อย filter ตอนใช้งาน
 
-
-
                             foreach ($inds as $ind) {
                                 // ===== หัวตัวชี้วัด =====
-                                $title = trim(($ind->code ? "[{$ind->code}] " : '') . ($ind->name ?? ''));
+                                $title = trim(($ind->code ? "[{$ind->code}] " : '').($ind->name ?? ''));
                                 $s->mergeCells("A{$row}:I{$row}")->setCellValue("A{$row}", $title);
                                 $s->getStyle("A{$row}")->getFont()->setBold(true);
                                 $row++;
 
                                 // ===== หัวตารางต่อ-ตัวชี้วัด =====
-                                $s->mergeCells("A{$row}:A" . ($row + 1))->setCellValue("A{$row}", 'ข้อ');
-                                $s->mergeCells("B{$row}:B" . ($row + 1))->setCellValue("B{$row}", 'เกณฑ์มาตรฐาน');
+                                $s->mergeCells("A{$row}:A".($row + 1))->setCellValue("A{$row}", 'ข้อ');
+                                $s->mergeCells("B{$row}:B".($row + 1))->setCellValue("B{$row}", 'เกณฑ์มาตรฐาน');
                                 $s->mergeCells("C{$row}:D{$row}")->setCellValue("C{$row}", 'ผลการดำเนินงาน');
-                                $s->setCellValue("C" . ($row + 1), 'มี');
-                                $s->setCellValue("D" . ($row + 1), 'ไม่มี');
-                                $s->mergeCells("E{$row}:H" . ($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
-                                $s->mergeCells("I{$row}:I" . ($row + 1))->setCellValue("I{$row}", 'เอกสาร/หลักฐาน');
+                                $s->setCellValue('C'.($row + 1), 'มี');
+                                $s->setCellValue('D'.($row + 1), 'ไม่มี');
+                                $s->mergeCells("E{$row}:H".($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
+                                $s->mergeCells("I{$row}:I".($row + 1))->setCellValue("I{$row}", 'เอกสาร/หลักฐาน');
                                 $row += 2;
 
                                 // ===== แสดงรายการเกณฑ์ (Criteria) ของตัวชี้วัดนี้ =====
@@ -398,10 +418,11 @@ class IndicatorsExport implements FromCollection, WithEvents
                                             $type = $block['type'] ?? '';
                                             if ($type === 'text') {
                                                 $s->mergeCells("E{$reportRow}:H{$reportRow}");
-                                                $s->setCellValue("E{$reportRow}", (string)($block['text'] ?? ''));
+                                                $s->setCellValue("E{$reportRow}", (string) ($block['text'] ?? ''));
                                                 $s->getStyle("E{$reportRow}")->getAlignment()->setWrapText(true);
                                                 $wroteReport = true;
                                                 $reportRow++;
+
                                                 continue;
                                             }
                                             if ($type === 'table') {
@@ -415,19 +436,20 @@ class IndicatorsExport implements FromCollection, WithEvents
                                                     $s->setCellValue("H{$reportRow}", $cells[3] ?? '');
                                                     if (count($cells) > 4) {
                                                         $extra = implode(' ', array_slice($cells, 4));
-                                                        $s->setCellValue("H{$reportRow}", trim(($cells[3] ?? '') . ' ' . $extra));
+                                                        $s->setCellValue("H{$reportRow}", trim(($cells[3] ?? '').' '.$extra));
                                                     }
                                                     $s->getStyle("E{$reportRow}:H{$reportRow}")->getAlignment()->setWrapText(true);
                                                     $wroteReport = true;
                                                     $reportRow++;
                                                 }
+
                                                 continue;
                                             }
                                             if ($type === 'image') {
                                                 $path = $this->resolveImagePath((string) ($block['src'] ?? ''));
                                                 if ($path) {
                                                     $s->mergeCells("E{$reportRow}:H{$reportRow}");
-                                                    $drawing = new Drawing();
+                                                    $drawing = new Drawing;
                                                     $drawing->setPath($path);
                                                     $drawing->setHeight(90);
                                                     $drawing->setCoordinates("E{$reportRow}");
@@ -436,6 +458,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                                                     $wroteReport = true;
                                                     $reportRow++;
                                                 }
+
                                                 continue;
                                             }
                                         }
@@ -446,17 +469,18 @@ class IndicatorsExport implements FromCollection, WithEvents
                                         $label = $ev->name ?? '';
                                         $reqName = $ev->requirement?->name;
                                         if ($reqName) {
-                                            $label .= ' [' . $reqName . ']';
+                                            $label .= ' ['.$reqName.']';
                                         }
+
                                         return trim($label);
                                     })->filter()->implode(', ');
                                     $cellValue = $reqList !== ''
-                                        ? "รายการที่ต้องส่ง: {$reqList}\nหลักฐาน: " . ($evList ?: '-')
+                                        ? "รายการที่ต้องส่ง: {$reqList}\nหลักฐาน: ".($evList ?: '-')
                                         : ($evList ?: '-');
                                     $s->setCellValue("I{$row}", $cellValue);
                                     $s->getStyle("I{$row}")->getAlignment()->setWrapText(true);
 
-                                    if (!$wroteReport) {
+                                    if (! $wroteReport) {
                                         $s->mergeCells("E{$row}:H{$row}");
                                         $s->setCellValue("E{$row}", '-');
                                         $s->getStyle("E{$row}")->getAlignment()->setWrapText(true);
@@ -499,7 +523,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                                     $score = (float) (($rel->score_acc ?? null) ?? ($ind->score_acc ?? 0));
                                     $scoreText = rtrim(rtrim(number_format($score, 2, '.', ''), '0'), '.');
                                     try {
-                                        $s->setCellValue("D{$r1}", ($scoreText === '' ? '0' : $scoreText) . ' คะแนน');
+                                        $s->setCellValue("D{$r1}", ($scoreText === '' ? '0' : $scoreText).' คะแนน');
                                         $s->mergeCells("E{$r1}:I{$r1}")->setCellValue("E{$r1}", '✓');
                                     } catch (\Throwable $ex) {
                                     }
@@ -517,7 +541,7 @@ class IndicatorsExport implements FromCollection, WithEvents
                                         }
                                     }
                                 }
-                                if (!empty($liItems)) {
+                                if (! empty($liItems)) {
                                     $writeRow = $start2 + 1;
                                     foreach ($liItems as $txt) {
                                         $scoreText = '';
@@ -527,11 +551,11 @@ class IndicatorsExport implements FromCollection, WithEvents
                                                 $mm[2] ?? null,
                                                 $mm[3] ?? null,
                                             ]));
-                                            if (!empty($vals)) {
-                                                $scoreText = rtrim(rtrim(number_format((float)$vals[0], 2, '.', ''), '0'), '.');
+                                            if (! empty($vals)) {
+                                                $scoreText = rtrim(rtrim(number_format((float) $vals[0], 2, '.', ''), '0'), '.');
                                             }
                                         } elseif (preg_match('/([0-9]+(?:\.[0-9]+)?)/', $txt, $mm)) {
-                                            $scoreText = rtrim(rtrim(number_format((float)$mm[1], 2, '.', ''), '0'), '.');
+                                            $scoreText = rtrim(rtrim(number_format((float) $mm[1], 2, '.', ''), '0'), '.');
                                         }
                                         if ($writeRow > $r) {
                                             $s->mergeCells("A{$writeRow}:C{$writeRow}")->setCellValue("A{$writeRow}", $txt);
@@ -545,14 +569,15 @@ class IndicatorsExport implements FromCollection, WithEvents
                                         }
                                         // override placeholder score with parsed value if available
                                         try {
-                                            $s->setCellValue("D{$writeRow}", ($scoreText === '' ? '...........' : $scoreText) . ' คะแนน');
-                                        } catch (\Throwable $ex) {}
+                                            $s->setCellValue("D{$writeRow}", ($scoreText === '' ? '...........' : $scoreText).' คะแนน');
+                                        } catch (\Throwable $ex) {
+                                        }
                                         $writeRow++;
                                     }
                                 }
 
                                 // เติมคะแนนและติ๊กถูกตามเกณฑ์จากรายการ li
-                                if (!empty($liItems)) {
+                                if (! empty($liItems)) {
                                     $score = (float) (($relations[$ind->id]->score_acc ?? null) ?? ($ind->score_acc ?? 0));
                                     $scoreClean = (float) number_format($score, 2, '.', '');
                                     $rowPtr = $start2 + 1;
@@ -564,20 +589,20 @@ class IndicatorsExport implements FromCollection, WithEvents
                                                 $mm[2] ?? null,
                                                 $mm[3] ?? null,
                                             ]));
-                                            if (!empty($vals)) {
+                                            if (! empty($vals)) {
                                                 $liScore = (float) $vals[0];
                                             }
                                         }
                                         if ($liScore === null) {
-                                        if (preg_match('/\(?\s*([0-9]+(?:\.[0-9]+)?)\s*\)?\s*คะแนน/u', $txt, $mm)) {
-                                            $liScore = (float) $mm[1];
-                                        } elseif (preg_match('/([0-9]+(?:\.[0-9]+)?)/', $txt, $mm)) {
-                                            $liScore = (float) $mm[1];
-                                        }
+                                            if (preg_match('/\(?\s*([0-9]+(?:\.[0-9]+)?)\s*\)?\s*คะแนน/u', $txt, $mm)) {
+                                                $liScore = (float) $mm[1];
+                                            } elseif (preg_match('/([0-9]+(?:\.[0-9]+)?)/', $txt, $mm)) {
+                                                $liScore = (float) $mm[1];
+                                            }
                                         }
                                         $match = ($liScore !== null) && (abs($liScore - $scoreClean) < 0.001);
                                         if ($match) {
-                                            $s->setCellValue("D{$rowPtr}", rtrim(rtrim(number_format($score, 2, '.', ''), '0'), '.') . ' คะแนน');
+                                            $s->setCellValue("D{$rowPtr}", rtrim(rtrim(number_format($score, 2, '.', ''), '0'), '.').' คะแนน');
                                             $s->mergeCells("E{$rowPtr}:I{$rowPtr}")->setCellValue("E{$rowPtr}", '✓');
                                         }
                                         $rowPtr++;
@@ -587,18 +612,19 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 $s->getStyle("A{$start2}:I{$r}")->applyFromArray([
                                     'borders' => [
                                         'allBorders' => [
-                                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+                                            'borderStyle' => Border::BORDER_THIN,
                                         ],
                                     ],
                                     'alignment' => [
-                                        'horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER,
-                                        'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER,
+                                        'horizontal' => Alignment::HORIZONTAL_CENTER,
+                                        'vertical' => Alignment::VERTICAL_CENTER,
                                         'wrapText' => true,
                                     ],
                                 ]);
 
                                 $row = $r + 2;
                                 $i++;
+
                                 continue; // ข้ามโค้ดแสดงแถวตัวชี้วัดแบบเดิม
                                 $s->setCellValue("A{$row}", $i);
                                 $s->setCellValue("B{$row}", $ind->name ?? '');
@@ -653,9 +679,9 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 $criteriaTexts = [];
                                 if ($rel && $rel->relationLoaded('criterias')) {
                                     foreach ($rel->criterias as $c) {
-                                        $seq = trim((string)($c->sequence ?? ''));
+                                        $seq = trim((string) ($c->sequence ?? ''));
                                         $label = $c->name ?: '';
-                                        $criteriaTexts[] = ($seq !== '' ? "{$seq}. " : '') . $label;
+                                        $criteriaTexts[] = ($seq !== '' ? "{$seq}. " : '').$label;
                                     }
                                 }
                                 if (empty($criteriaTexts)) {
@@ -671,16 +697,16 @@ class IndicatorsExport implements FromCollection, WithEvents
 
                                 // สไตล์กรอบของบล็อคคะแนน (รวมหัว)
                                 $firstRow = $start;
-                                $lastRow  = $row;
+                                $lastRow = $row;
                                 $s->getStyle("A{$firstRow}:I{$lastRow}")->applyFromArray([
                                     'borders' => [
                                         'allBorders' => [
-                                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+                                            'borderStyle' => Border::BORDER_THIN,
                                         ],
                                     ],
                                     'alignment' => [
-                                        'horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER,
-                                        'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER,
+                                        'horizontal' => Alignment::HORIZONTAL_CENTER,
+                                        'vertical' => Alignment::VERTICAL_CENTER,
                                         'wrapText' => true,
                                     ],
                                 ]);
@@ -699,6 +725,7 @@ class IndicatorsExport implements FromCollection, WithEvents
 
                         // แสดงเกณฑ์การให้คะแนนรายตัวชี้วัดแล้วด้านบน จึงข้ามบล็อคระดับด้านด้านล่าง
                         $row += 2;
+
                         continue;
 
                         // ===== เกณฑ์การให้คะแนน + การประเมินตนเอง =====
@@ -713,9 +740,9 @@ class IndicatorsExport implements FromCollection, WithEvents
                                 $rel = $relations[$ind->id] ?? null;
                                 if ($rel && $rel->relationLoaded('criterias')) {
                                     foreach ($rel->criterias as $c) {
-                                        $seq = trim((string)($c->sequence ?? ''));
+                                        $seq = trim((string) ($c->sequence ?? ''));
                                         $label = $c->name ?: '';
-                                        $criteriaTexts[] = ($seq !== '' ? "{$seq}. " : '') . $label;
+                                        $criteriaTexts[] = ($seq !== '' ? "{$seq}. " : '').$label;
                                     }
                                 }
                             }
@@ -732,16 +759,16 @@ class IndicatorsExport implements FromCollection, WithEvents
 
                         // สไตล์กรอบของบล็อคคะแนน (รวมหัวเรื่อง)
                         $firstRow = $start; // หัวบล็อค
-                        $lastRow  = $row;   // แถวสุดท้ายของรายการ
+                        $lastRow = $row;   // แถวสุดท้ายของรายการ
                         $s->getStyle("A{$firstRow}:I{$lastRow}")->applyFromArray([
                             'borders' => [
                                 'allBorders' => [
-                                    'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+                                    'borderStyle' => Border::BORDER_THIN,
                                 ],
                             ],
                             'alignment' => [
-                                'horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER,
-                                'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER,
+                                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                                'vertical' => Alignment::VERTICAL_CENTER,
                                 'wrapText' => true,
                             ],
                         ]);
@@ -767,12 +794,12 @@ class IndicatorsExport implements FromCollection, WithEvents
                 $s->getStyle("A1:I{$row}")->applyFromArray([
                     'borders' => [
                         'allBorders' => [
-                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+                            'borderStyle' => Border::BORDER_THIN,
                         ],
                     ],
                     'alignment' => [
-                        'horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER,
-                        'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER,
+                        'horizontal' => Alignment::HORIZONTAL_CENTER,
+                        'vertical' => Alignment::VERTICAL_CENTER,
                         'wrapText' => true,
                     ],
                 ]);

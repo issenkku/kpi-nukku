@@ -4,17 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\Category;
 use App\Models\Department;
-use App\Models\Evidence;
 use App\Models\Indicator;
 use App\Models\Standard;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class DashboardController extends Controller
 {
-
     public function index(Request $request)
     {
         // 1) ปีทั้งหมดสำหรับ Filter
@@ -54,15 +51,15 @@ class DashboardController extends Controller
         $displayYearText = $displayYear ? (string) $displayYear : 'ไม่มีข้อมูล';
 
         // 4) Indicators สำหรับแสดงในตาราง
-        $indicators = Indicator::query()
+        $indicatorsQuery = Indicator::query()
             ->whereHas('assignments')
             ->with([
                 'category:id,name,standard_id',
                 'category.standard:id,name',
-                'assignments.collectorUser' => fn($q) => $q->select('id', 'first_name', 'last_name', 'department_id'),
+                'assignments.collectorUser' => fn ($q) => $q->select('id', 'first_name', 'last_name', 'department_id'),
                 'assignments.collectorUser.department:id,name',
                 'criterias.evidenceRequirements',
-                'criterias.evidences' => fn($q) => $q->where('status', true),
+                'criterias.evidences' => fn ($q) => $q->where('status', true),
             ])
             ->orderBy('indicators.year', 'asc')
             ->orderByRaw("
@@ -72,8 +69,15 @@ class DashboardController extends Controller
                 WHEN indicators.code LIKE 'NCO-%' THEN 3
                 ELSE 99
             END
-        ")
-            ->orderByRaw("COALESCE(NULLIF(SPLIT_PART(indicators.code, '-', 2), ''), '0')::int ASC")
+        ");
+
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $indicatorsQuery->orderByRaw("COALESCE(NULLIF(SPLIT_PART(indicators.code, '-', 2), ''), '0')::int ASC");
+        } else {
+            $indicatorsQuery->orderByRaw("CAST(SUBSTR(indicators.code, INSTR(indicators.code, '-') + 1) AS INTEGER) ASC");
+        }
+
+        $indicators = $indicatorsQuery
             ->orderBy('indicators.code', 'asc')
             ->get()
             ->map(function ($indicator) {
@@ -105,6 +109,7 @@ class DashboardController extends Controller
                 $indicator->status_doc = ! $hasAnyEvidence
                     ? 'รอดำเนินการ'
                     : ($allComplete ? 'ครบ' : 'ไม่ครบ');
+
                 return $indicator;
             });
 
@@ -115,7 +120,7 @@ class DashboardController extends Controller
             ->get();
 
         $statusCounts = [
-            'complete'   => $indicatorsForStatus->where('status', 3)->count(),
+            'complete' => $indicatorsForStatus->where('status', 3)->count(),
             'incomplete' => $indicatorsForStatus->where('status', 4)->count(),
             'pending' => $indicatorsForStatus->whereIn('status', [0, 1, 2])->count(),
 
@@ -130,9 +135,9 @@ class DashboardController extends Controller
 
         // 7) Dropdown filters
         $allStandards = Standard::orderBy('name')->get(['id', 'name']);
-        
-        $departments    = Department::orderBy('name')->pluck('name');
-        $collectors     = User::query()
+
+        $departments = Department::orderBy('name')->pluck('name');
+        $collectors = User::query()
             ->whereIn('id', function ($q) {
                 $q->select('collector')->from('assignments');
             })
@@ -143,22 +148,21 @@ class DashboardController extends Controller
         $dimensionNames = Category::query()
             ->whereNotNull('name')
             ->pluck('name')
-            ->map(fn($n) => trim($n))
+            ->map(fn ($n) => trim($n))
             ->filter()
             ->unique()
             ->sort()
             ->values()
             ->toArray();
 
-
         $dimensionStats = Category::select('id', 'name', 'standard_id')
             ->with('standard:id,name')
-            ->withCount(['indicators as total_items' => fn($q) => $q->whereHas('assignments')])
+            ->withCount(['indicators as total_items' => fn ($q) => $q->whereHas('assignments')])
             ->orderBy('name')
             ->get();
 
         // 8) ปีล่าสุด 5 ปี
-        $allYears   = $yearsForFilter->toArray();
+        $allYears = $yearsForFilter->toArray();
         $last5Years = array_slice($allYears, max(0, count($allYears) - 5));
 
         // 9) Filters สำหรับ codes และ types
@@ -220,7 +224,7 @@ class DashboardController extends Controller
         $pickedYear = null;
         if ($pickedYearRaw !== null && trim((string) $pickedYearRaw) !== '') {
             $s = trim((string) $pickedYearRaw);
-            if (!in_array(strtolower($s), ['ทั้งหมด', 'all', '*', '0'], true)) {
+            if (! in_array(strtolower($s), ['ทั้งหมด', 'all', '*', '0'], true)) {
                 $pickedYear = (int) $s;
             }
         }
@@ -231,7 +235,7 @@ class DashboardController extends Controller
                 ->distinct()
                 ->orderBy('year')
                 ->pluck('year')
-                ->map(fn($y) => (int) $y)
+                ->map(fn ($y) => (int) $y)
                 ->toArray();
         } else {
             $yearRange = [$pickedYear];
@@ -248,9 +252,9 @@ class DashboardController extends Controller
             ->whereHas('assignments')
             ->whereNotNull('indicators.year')
             ->when(
-                !is_null($pickedYear),
-                fn($q) => $q->where('indicators.year', $pickedYear),
-                fn($q) => $q->whereIn('indicators.year', $yearRange)
+                ! is_null($pickedYear),
+                fn ($q) => $q->where('indicators.year', $pickedYear),
+                fn ($q) => $q->whereIn('indicators.year', $yearRange)
             )
             ->selectRaw('
         standards.id   as standard_id,
@@ -281,13 +285,14 @@ class DashboardController extends Controller
             ->orderBy('indicators.year')
             ->get();
 
-
         // -------- 4) ฟังก์ชัน normalize รหัส indicator --------
         $normalize = function ($c) {
             $c = strtoupper(trim((string) $c));
             $c = preg_replace('/\s+/', '', $c);
-            if (preg_match('/^([A-Z]+)[\s_\-]?0*(\d+)$/', $c, $m))
-                return $m[1] . '-' . (int) $m[2];
+            if (preg_match('/^([A-Z]+)[\s_\-]?0*(\d+)$/', $c, $m)) {
+                return $m[1].'-'.(int) $m[2];
+            }
+
             return $c;
         };
 
@@ -300,26 +305,26 @@ class DashboardController extends Controller
             $code = $normalize($r->indicator_code);
 
             $chartsByStandard[$sid] ??= [
-                'standard_id'   => $sid,
+                'standard_id' => $sid,
                 'standard_name' => $r->standard_name,
-                'indicators'    => [],
+                'indicators' => [],
             ];
             $chartsByStandard[$sid]['indicators'][$code] ??= [
-                'indicator_id'   => $r->indicator_id,
-                'indicator_key'  => $code,
+                'indicator_id' => $r->indicator_id,
+                'indicator_key' => $code,
                 'indicator_code' => $code,
                 'indicator_name' => $r->indicator_name,
                 'indicator_type' => $r->indicator_type,
-                'category_id'    => $r->category_id,
-                'category_name'  => $r->category_name,
-                'years'          => [],
-                'values'         => [],
-                'max_values'     => [], // ✅ เพิ่มตรงนี้
+                'category_id' => $r->category_id,
+                'category_name' => $r->category_name,
+                'years' => [],
+                'values' => [],
+                'max_values' => [], // ✅ เพิ่มตรงนี้
             ];
 
             $cb = &$chartsByStandard[$sid]['indicators'][$code];
-            $cb['years'][]      = (string) $r->year;
-            $cb['values'][]     = (float) $r->total_score;
+            $cb['years'][] = (string) $r->year;
+            $cb['values'][] = (float) $r->total_score;
             $cb['max_values'][] = (float) $r->max_score; // ✅ เก็บ max
 
         }
@@ -328,17 +333,16 @@ class DashboardController extends Controller
         foreach ($chartsByStandard as $sid => &$bucket) {
             foreach ($bucket['indicators'] as &$ind) {
                 $mapScore = [];
-                $mapMax   = [];
+                $mapMax = [];
                 foreach ($ind['years'] as $i => $y) {
                     $yy = (string) $y;
                     $mapScore[$yy] = ($mapScore[$yy] ?? 0) + (float) $ind['values'][$i];
-                    $mapMax[$yy]   = ($mapMax[$yy] ?? 0) + (float) $ind['max_values'][$i];
+                    $mapMax[$yy] = ($mapMax[$yy] ?? 0) + (float) $ind['max_values'][$i];
                 }
-                $ind['years']      = array_values($yearRangeStr);
-                $ind['values']     = array_map(fn($y) => (float) ($mapScore[$y] ?? 0), $yearRangeStr);
-                $ind['max_values'] = array_map(fn($y) => (float) ($mapMax[$y] ?? 0), $yearRangeStr);
+                $ind['years'] = array_values($yearRangeStr);
+                $ind['values'] = array_map(fn ($y) => (float) ($mapScore[$y] ?? 0), $yearRangeStr);
+                $ind['max_values'] = array_map(fn ($y) => (float) ($mapMax[$y] ?? 0), $yearRangeStr);
             }
-
 
             // ✅ sort indicators ตาม indicator_code
             usort($bucket['indicators'], function ($a, $b) use ($prefixOrder) {
@@ -348,10 +352,15 @@ class DashboardController extends Controller
                 $pb = $mb[1] ?? $b['indicator_code'];
                 $ra = $prefixOrder[$pa] ?? 999;
                 $rb = $prefixOrder[$pb] ?? 999;
-                if ($ra !== $rb) return $ra <=> $rb;
-                if ($pa !== $pb) return strcmp($pa, $pb);
+                if ($ra !== $rb) {
+                    return $ra <=> $rb;
+                }
+                if ($pa !== $pb) {
+                    return strcmp($pa, $pb);
+                }
                 $na = isset($ma[2]) ? (int) $ma[2] : PHP_INT_MAX;
                 $nb = isset($mb[2]) ? (int) $mb[2] : PHP_INT_MAX;
+
                 return $na <=> $nb;
             });
         }
@@ -362,23 +371,23 @@ class DashboardController extends Controller
             ->distinct()
             ->orderBy('year')
             ->pluck('year')
-            ->map(fn($y) => (string) $y)
+            ->map(fn ($y) => (string) $y)
             ->toArray();
 
-        if (!is_null($pickedYear) && !in_array((string) $pickedYear, $filterYears, true)) {
+        if (! is_null($pickedYear) && ! in_array((string) $pickedYear, $filterYears, true)) {
             $filterYears[] = (string) $pickedYear;
             sort($filterYears);
         }
 
         $allStandards = Standard::query()
             ->select('id', 'name')->orderBy('name')->get()
-            ->map(fn($s) => ['id' => $s->id, 'name' => trim($s->name)])->toArray();
+            ->map(fn ($s) => ['id' => $s->id, 'name' => trim($s->name)])->toArray();
 
         $allDimensions = Category::query()->whereNotNull('name')->pluck('name')
-            ->map(fn($n) => trim($n))->filter()->unique()->sort()->values()->toArray();
+            ->map(fn ($n) => trim($n))->filter()->unique()->sort()->values()->toArray();
 
         $allTypes = Indicator::query()->whereNotNull('type')->pluck('type')
-            ->map(fn($t) => trim($t))->filter()->unique()->sort()->values()->toArray();
+            ->map(fn ($t) => trim($t))->filter()->unique()->sort()->values()->toArray();
 
         $codesRaw = Indicator::query()->whereNotNull('code')->pluck('code')->toArray();
         $codesNormalized = array_map($normalize, $codesRaw);
@@ -390,21 +399,26 @@ class DashboardController extends Controller
             $pb = $mb[1] ?? $b;
             $ra = $prefixOrder[$pa] ?? 999;
             $rb = $prefixOrder[$pb] ?? 999;
-            if ($ra !== $rb) return $ra <=> $rb;
-            if ($pa !== $pb) return strcmp($pa, $pb);
+            if ($ra !== $rb) {
+                return $ra <=> $rb;
+            }
+            if ($pa !== $pb) {
+                return strcmp($pa, $pb);
+            }
             $na = isset($ma[2]) ? (int) $ma[2] : PHP_INT_MAX;
             $nb = isset($mb[2]) ? (int) $mb[2] : PHP_INT_MAX;
+
             return $na <=> $nb;
         });
 
         $filters = [
-            'years'      => $filterYears,
-            'codes'      => $codesUnique,
-            'standards'  => $allStandards,
+            'years' => $filterYears,
+            'codes' => $codesUnique,
+            'standards' => $allStandards,
             'dimensions' => $allDimensions,
-            'types'      => $allTypes,
+            'types' => $allTypes,
             'pickedYear' => $pickedYear,
-            'range'      => ['start' => reset($yearRange), 'end' => end($yearRange)],
+            'range' => ['start' => reset($yearRange), 'end' => end($yearRange)],
         ];
         $yearlyTotals = Indicator::query()
             ->whereHas('assignments')
@@ -413,30 +427,30 @@ class DashboardController extends Controller
             ->groupBy('year')
             ->orderBy('year')
             ->get()
-            ->map(fn($r) => [
-                'year'  => (int) $r->year,
+            ->map(fn ($r) => [
+                'year' => (int) $r->year,
                 'score' => (float) $r->total_score,
-                'max'   => (float) $r->max_score,
+                'max' => (float) $r->max_score,
             ])
             ->toArray();
 
-
         return view('dashboard.result', [
-            'standards'        => $standards,
+            'standards' => $standards,
             'chartsByStandard' => $chartsByStandard,
-            'filters'          => $filters,
-            'yearlyTotals'     => $yearlyTotals,
+            'filters' => $filters,
+            'yearlyTotals' => $yearlyTotals,
             'chartsStandardBars' => $this->buildChartStandardsPerStandard($standards),
-            'chartDimensions'  => $this->buildChartDimensionsPerYear(),
+            'chartDimensions' => $this->buildChartDimensionsPerYear(),
         ]);
     }
+
     private function buildChartStandardsPerStandard($standards)
     {
         $allYears = Indicator::whereNotNull('year')
             ->distinct()
             ->orderBy('year')
             ->pluck('year')
-            ->map(fn($y) => (int) $y)
+            ->map(fn ($y) => (int) $y)
             ->toArray();
 
         $rows = Indicator::query()
@@ -464,7 +478,7 @@ class DashboardController extends Controller
         foreach ($rows as $r) {
             $series[$r->sid][$r->year] = [
                 'score' => (float) $r->total_score,
-                'max'   => (float) $r->max_score,
+                'max' => (float) $r->max_score,
             ];
         }
 
@@ -476,12 +490,13 @@ class DashboardController extends Controller
                 'name' => $std->name,
                 'labels' => $allYears,
                 'scores' => array_column($series[$std->id], 'score'),
-                'max'    => array_column($series[$std->id], 'max'),
+                'max' => array_column($series[$std->id], 'max'),
             ];
         }
 
         return $charts;
     }
+
     private function buildChartDimensionsPerYear()
     {
         // ปีทั้งหมด
@@ -489,7 +504,7 @@ class DashboardController extends Controller
             ->distinct()
             ->orderBy('year')
             ->pluck('year')
-            ->map(fn($y) => (int) $y)
+            ->map(fn ($y) => (int) $y)
             ->toArray();
 
         // ✅ ดึงรวมตาม "ด้าน" (categories.name) แทน category ย่อย
@@ -519,7 +534,7 @@ class DashboardController extends Controller
             }
             $series[$dim][$r->year] = [
                 'score' => (float) $r->total_score,
-                'max'   => (float) $r->max_score,
+                'max' => (float) $r->max_score,
             ];
         }
 
@@ -527,11 +542,11 @@ class DashboardController extends Controller
         $charts = [];
         foreach ($series as $dim => $data) {
             $charts[] = [
-                'id'     => md5($dim),
-                'name'   => $dim,
+                'id' => md5($dim),
+                'name' => $dim,
                 'labels' => $allYears,
                 'scores' => array_column($data, 'score'),
-                'max'    => array_column($data, 'max'),
+                'max' => array_column($data, 'max'),
             ];
         }
 

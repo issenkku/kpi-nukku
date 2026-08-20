@@ -130,7 +130,7 @@
                                 {!! $criteria->description !!}
                             </div>
                         @endif
-                      
+
                         @php
                             // Pick the most recent non-empty detail from evidences of this criteria
                             $detailEvidence = $criteria->evidences
@@ -318,7 +318,7 @@
                                             </form>
                                         </x-modal>
                                     </div>
-                                    
+
                                 </div>
                             @empty
                                 <div class="text-sm text-center text-gray-500 opacity-75">----- ยังไม่มีหลักฐานแนบ
@@ -757,7 +757,7 @@
                     <span class="file-name" title="${file.name}">${file.name}</span>
                     <span class="file-size">${this.formatFileSize(file.size)}</span>
                     <button type="button" class="remove-file" aria-label="ลบไฟล์"
-                        data-name="${encodeURIComponent(file.name)}" 
+                        data-name="${encodeURIComponent(file.name)}"
                         data-size="${file.size}"
                         data-criteria="${this.criteriaId}">
                         <i data-lucide="x" style="width:16px;height:16px;"></i>
@@ -838,14 +838,14 @@
                     const row = document.createElement('div');
                     row.className = `form-group url-row`;
                     row.innerHTML = `
-                    <input type="text" name="url_names[]" aria-label="ชื่อ URL" 
-                        class="form-input url-name url-name-${this.criteriaId}" 
+                    <input type="text" name="url_names[]" aria-label="ชื่อ URL"
+                        class="form-input url-name url-name-${this.criteriaId}"
                         placeholder="ชื่อหลักฐาน URL">
-                    <input type="url" name="additional_urls[]" aria-label="ที่อยู่ URL" 
-                        class="form-input url-input url-input-${this.criteriaId}" 
+                    <input type="url" name="additional_urls[]" aria-label="ที่อยู่ URL"
+                        class="form-input url-input url-input-${this.criteriaId}"
                         placeholder="วาง URL เพิ่มเติม">
-                    <button type="button" 
-                        class="add-url-btn add-url-btn-${this.criteriaId}" 
+                    <button type="button"
+                        class="add-url-btn add-url-btn-${this.criteriaId}"
                         aria-label="เพิ่ม URL">
                         <i data-lucide="plus" style="width:16px;height:16px;"></i>
                     </button>`;

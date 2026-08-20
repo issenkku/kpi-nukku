@@ -511,7 +511,7 @@
                                                 </a>
                                             @endif
                                         @endif
-                                 
+
                                     </td>
                                     @if ($loop->first && $showNotifyColumn)
                                         <td class="text-center" rowspan="{{ $rowspan }}">

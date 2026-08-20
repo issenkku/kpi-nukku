@@ -3,18 +3,26 @@
 namespace App\Http\Controllers;
 
 use App\Models\Assignment;
-use App\Models\Indicator;
 use App\Models\Criteria;
+use App\Models\Indicator;
+use App\Models\User;
 use App\Models\Variable;
+use App\Notifications\IndicatorCorrectionRequestedNotification;
+use App\Notifications\IndicatorFinalSubmittedNotification;
+use App\Support\RichTextSanitizer;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class DashboardKpiUserController extends Controller
 {
+    public function __construct(private readonly RichTextSanitizer $richText) {}
+
     public function index()
     {
         $user = Auth::user();
+
         $userId = $user->id;
         $deptId = $user->department_id;
 
@@ -33,8 +41,8 @@ class DashboardKpiUserController extends Controller
             });
         }
 
-        $indicators = $query
-            ->orderByRaw("
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $query->orderByRaw("
             CASE LEFT(code, 3)
                 WHEN 'NCS' THEN 1
                 WHEN 'NCO' THEN 2
@@ -42,13 +50,26 @@ class DashboardKpiUserController extends Controller
                 ELSE 4
             END
         ")
-            ->orderByRaw("
+                ->orderByRaw("
             CASE 
                 WHEN split_part(code, '-', 2) ~ '^[0-9]+$' 
                 THEN CAST(split_part(code, '-', 2) AS INTEGER)
                 ELSE 999999
             END
-        ")
+        ");
+        } else {
+            $query->orderByRaw("
+                CASE SUBSTR(code, 1, 3)
+                    WHEN 'NCS' THEN 1
+                    WHEN 'NCO' THEN 2
+                    WHEN 'NCP' THEN 3
+                    ELSE 4
+                END
+            ")
+                ->orderByRaw("CAST(SUBSTR(code, INSTR(code, '-') + 1) AS INTEGER)");
+        }
+
+        $indicators = $query
             ->get()
             ->map(function ($i) use ($userId) {
                 $data = $this->serializeIndicatorForList($i);
@@ -84,6 +105,10 @@ class DashboardKpiUserController extends Controller
 
         $user = Auth::user();
 
+        if ($user->hasRole('user') && ! $this->canViewIndicator($indicator)) {
+            abort(403);
+        }
+
         // Optional UI hint from query string (may be 'assigned' or 'is_assigned')
         // Do NOT use this for authorization/branching
         $assignedHint = $request->has('is_assigned')
@@ -105,28 +130,36 @@ class DashboardKpiUserController extends Controller
 
     public function saveVariables(Request $request, $id)
     {
+        $validated = $request->validate([
+            'variables' => 'nullable|array',
+            'variables.*' => 'nullable|numeric',
+            'status' => 'nullable|integer|in:1,2',
+            'criterias' => 'nullable|array',
+            'criterias.*.evidence_comment' => 'nullable|string|max:16777215',
+        ]);
+
         $indicator = Indicator::findOrFail($id);
+        abort_unless($this->isDirectlyAssigned($indicator), 403);
         $previousStatus = (int) ($indicator->status ?? 0);
 
-        if ($request->has('variables')) {
-            foreach ($request->variables as $varId => $value) {
+        if (array_key_exists('variables', $validated)) {
+            foreach ($validated['variables'] as $varId => $value) {
                 $normalizedValue = $this->normalizeVariableValue($value);
-                Variable::updateOrCreate(
-                    ['id' => $varId, 'indicator_id' => $indicator->id],
-                    ['value' => $normalizedValue]
-                );
+                $variable = $indicator->variables()->whereKey($varId)->firstOrFail();
+                $variable->update(['value' => $normalizedValue]);
             }
         }
 
-        if ($request->has('status')) {
-            $indicator->status = $request->status;
+        if (array_key_exists('status', $validated)) {
+            $indicator->status = $validated['status'];
         }
 
-        if ($request->has('criterias')) {
-            foreach ($request->criterias as $criteriaId => $criteriaData) {
+        if (array_key_exists('criterias', $validated)) {
+            foreach ($validated['criterias'] as $criteriaId => $criteriaData) {
                 if (array_key_exists('evidence_comment', $criteriaData)) {
-                    Criteria::where('id', $criteriaId)->update([
-                        'evidence_comment' => $criteriaData['evidence_comment'],
+                    $criteria = $indicator->criterias()->whereKey($criteriaId)->firstOrFail();
+                    $criteria->update([
+                        'evidence_comment' => $this->richText->sanitize($criteriaData['evidence_comment']),
                     ]);
                 }
             }
@@ -137,9 +170,9 @@ class DashboardKpiUserController extends Controller
         // Notify QA when user submits final (status=2)
         try {
             if ((int) ($indicator->status ?? 0) === 2 && $previousStatus !== 2) {
-                $qaUsers = \App\Models\User::role(['qa_admin','super_admin','system_admin'])->get();
+                $qaUsers = User::role(['qa_admin', 'super_admin', 'system_admin'])->get();
                 foreach ($qaUsers as $qa) {
-                    $qa->notify(new \App\Notifications\IndicatorFinalSubmittedNotification($indicator, optional(\Illuminate\Support\Facades\Auth::user())->name));
+                    $qa->notify(new IndicatorFinalSubmittedNotification($indicator, optional(Auth::user())->name));
                 }
             }
         } catch (\Throwable $e) {
@@ -155,13 +188,14 @@ class DashboardKpiUserController extends Controller
     public function requestCorrection(Request $request, $id)
     {
         $indicator = Indicator::findOrFail($id);
+        abort_unless($this->isDirectlyAssigned($indicator), 403);
         $note = (string) $request->input('note', '');
 
         try {
-            $qaUsers = \App\Models\User::role(['qa_admin','super_admin','system_admin'])->get();
-            $by = optional(\Illuminate\Support\Facades\Auth::user())->name;
+            $qaUsers = User::role(['qa_admin', 'super_admin', 'system_admin'])->get();
+            $by = optional(Auth::user())->name;
             foreach ($qaUsers as $qa) {
-                $qa->notify(new \App\Notifications\IndicatorCorrectionRequestedNotification($indicator, $by, $note));
+                $qa->notify(new IndicatorCorrectionRequestedNotification($indicator, $by, $note));
             }
         } catch (\Throwable $e) {
             // ignore
@@ -189,6 +223,28 @@ class DashboardKpiUserController extends Controller
         }
 
         return is_numeric($value) ? (float) $value : null;
+    }
+
+    private function isDirectlyAssigned(Indicator $indicator): bool
+    {
+        return $indicator->assignments()
+            ->where('collector', Auth::id())
+            ->exists();
+    }
+
+    private function canViewIndicator(Indicator $indicator): bool
+    {
+        $user = Auth::user();
+        if (! $user) {
+            return false;
+        }
+
+        return $indicator->assignments()
+            ->where(function ($query) use ($user) {
+                $query->where('collector', $user->id)
+                    ->orWhereHas('collectorUser', fn ($users) => $users->where('department_id', $user->department_id));
+            })
+            ->exists();
     }
 
     private function serializeIndicatorForList(Indicator $i): array
@@ -237,7 +293,7 @@ class DashboardKpiUserController extends Controller
             // ทำให้ dashboard.blade เอาไป map หา department ได้
             'assignments' => $i->assignments->map(function ($a) {
                 // ถ้าในความสัมพันธ์ Assignment มี ->user ก็ใช้เลย ไม่งั้น fallback หาเอง
-                $user = $a->user ?? \App\Models\User::find($a->collector);
+                $user = $a->user ?? User::find($a->collector);
 
                 return [
                     'user' => $user ? [

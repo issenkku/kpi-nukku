@@ -23,6 +23,6 @@ return [
         'default_font' => 'SarabunLocal',
         'enable_font_subsetting' => true,
         'isHtml5ParserEnabled' => true,
-        'isRemoteEnabled' => true,
+        'isRemoteEnabled' => false,
     ],
 ];

@@ -1,6 +1,5 @@
 @extends('layouts.app')
 @section('title', 'จัดการข้อมูลหน่วยงาน')
-@section('content')
 
 @section('header', 'รายชื่อผู้ใช้งาน')
 @section('subheader', 'ระบบบริหารจัดการข้อมูลการรับรองสถาบันจากสภาการพยาบาล')

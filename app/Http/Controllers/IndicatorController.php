@@ -3,16 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\IndicatorResource;
+use App\Models\Affiliation;
 use App\Models\Category;
 use App\Models\Criteria;
 use App\Models\Department;
-use App\Models\Affiliation;
 use App\Models\Formula;
 use App\Models\Indicator;
 use App\Models\Standard;
 use App\Models\User;
 use App\Models\Variable;
-
+use App\Notifications\IndicatorAssignedNotification;
+use App\Services\ChecklistGenerator;
+use App\Support\RichTextSanitizer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +22,8 @@ use Illuminate\Validation\Rule;
 
 class IndicatorController extends Controller
 {
+    public function __construct(private readonly RichTextSanitizer $richText) {}
+
     public function index()
     {
 
@@ -50,11 +54,12 @@ class IndicatorController extends Controller
                         $num = (int) $after;
                     }
                 }
+
                 // Compose sortable key
                 return sprintf('%02d-%06d-%s', $rank, $num, $code);
             })
             ->values()
-            ->map(fn($i) => $this->serializeIndicatorForList($i));
+            ->map(fn ($i) => $this->serializeIndicatorForList($i));
 
         $years = Indicator::whereNotNull('year')
             ->selectRaw('DISTINCT year')
@@ -77,7 +82,7 @@ class IndicatorController extends Controller
             ->orderBy('first_name')
             ->orderBy('last_name')
             ->get()
-            ->map(fn($u) => [
+            ->map(fn ($u) => [
                 'id' => $u->id,
                 'name' => $u->display_name,
                 'department_id' => $u->department_id,
@@ -121,7 +126,7 @@ class IndicatorController extends Controller
             'standard_id' => 'required|exists:standards,id',
             'category_id' => [
                 'required',
-                Rule::exists('categories', 'id')->where(fn($q) => $q->where('standard_id', $request->input('standard_id'))),
+                Rule::exists('categories', 'id')->where(fn ($q) => $q->where('standard_id', $request->input('standard_id'))),
             ],
             'type' => 'nullable|string',
             'deadline' => 'required|date',
@@ -171,6 +176,7 @@ class IndicatorController extends Controller
             'scoring.variables.*.value' => 'nullable|numeric',
             'scoring.condition' => 'nullable|string',
         ]);
+        $validated = $this->sanitizeRichText($validated);
 
         try {
             DB::beginTransaction();
@@ -193,7 +199,7 @@ class IndicatorController extends Controller
 
             // สร้าง assignments หลายรายการ
             $indicator->assignments()->createMany(
-                collect($validated['user_ids'])->unique()->values()->map(fn($uid) => ['collector' => $uid])->all()
+                collect($validated['user_ids'])->unique()->values()->map(fn ($uid) => ['collector' => $uid])->all()
             );
 
             // Notify assigned users about the new assignment
@@ -201,7 +207,7 @@ class IndicatorController extends Controller
                 $indicator->loadMissing(['assignments.collectorUser']);
                 foreach ($indicator->assignments as $assignment) {
                     if ($assignment->collectorUser) {
-                        $assignment->collectorUser->notify(new \App\Notifications\IndicatorAssignedNotification($indicator));
+                        $assignment->collectorUser->notify(new IndicatorAssignedNotification($indicator));
                     }
                 }
             } catch (\Throwable $e) {
@@ -212,7 +218,7 @@ class IndicatorController extends Controller
             $this->syncVariablesAndFormula($indicator, $validated['scoring'] ?? []);
             $this->syncChecklistFromSelected($indicator, $validated['multiSelected'] ?? []);
             // Generate checklist items from multiCounts via service
-            app(\App\Services\ChecklistGenerator::class)
+            app(ChecklistGenerator::class)
                 ->syncFromCounts($indicator, $validated['multiCounts'] ?? [], $criteriaCount);
 
             DB::commit();
@@ -224,16 +230,12 @@ class IndicatorController extends Controller
             DB::rollBack();
 
             return back()
-                ->withErrors(['error' => 'เกิดข้อผิดพลาดในการบันทึก: ' . $e->getMessage()])
+                ->withErrors(['error' => 'เกิดข้อผิดพลาดในการบันทึก: '.$e->getMessage()])
                 ->withInput();
         }
     }
 
-    // Manually notify all assignees from indicator detail page 
-
- 
-
-
+    // Manually notify all assignees from indicator detail page
 
     public function edit($id)
     {
@@ -257,7 +259,7 @@ class IndicatorController extends Controller
             ->orderBy('first_name')
             ->orderBy('last_name')
             ->get()
-            ->map(fn($u) => [
+            ->map(fn ($u) => [
                 'id' => $u->id,
                 'name' => $u->display_name,
                 'department_id' => $u->department_id,
@@ -285,7 +287,7 @@ class IndicatorController extends Controller
             'standard_id' => 'required|exists:standards,id',
             'category_id' => [
                 'required',
-                Rule::exists('categories', 'id')->where(fn($q) => $q->where('standard_id', $request->input('standard_id'))),
+                Rule::exists('categories', 'id')->where(fn ($q) => $q->where('standard_id', $request->input('standard_id'))),
             ],
             'type' => 'nullable|string',
             'deadline' => 'required|date',
@@ -336,6 +338,7 @@ class IndicatorController extends Controller
             'scoring.condition' => 'nullable|string',
             'scoring.formula_id' => 'nullable|integer|exists:formulas,id',
         ]);
+        $validated = $this->sanitizeRichText($validated);
 
         try {
             DB::transaction(function () use ($validated, $id) {
@@ -381,7 +384,7 @@ class IndicatorController extends Controller
                 // --- Checklist (delete all existing and create new) ---
                 $indicator->checklistItems()->delete();
                 $this->syncChecklistFromSelected($indicator, $validated['multiSelected'] ?? []);
-                app(\App\Services\ChecklistGenerator::class)
+                app(ChecklistGenerator::class)
                     ->syncFromCounts($indicator, $validated['multiCounts'] ?? [], $criteriaCount);
             });
 
@@ -390,7 +393,7 @@ class IndicatorController extends Controller
                 ->with('success', 'ตัวบ่งชี้ถูกอัปเดตเรียบร้อยแล้ว');
         } catch (\Throwable $e) {
             return back()
-                ->withErrors(['error' => 'เกิดข้อผิดพลาดในการอัปเดต: ' . $e->getMessage()])
+                ->withErrors(['error' => 'เกิดข้อผิดพลาดในการอัปเดต: '.$e->getMessage()])
                 ->withInput();
         }
     }
@@ -412,7 +415,7 @@ class IndicatorController extends Controller
             DB::rollBack();
 
             return back()
-                ->withErrors(['error' => 'เกิดข้อผิดพลาดในการลบ: ' . $e->getMessage()]);
+                ->withErrors(['error' => 'เกิดข้อผิดพลาดในการลบ: '.$e->getMessage()]);
         }
     }
 
@@ -444,21 +447,21 @@ class IndicatorController extends Controller
             ->get()
             ->groupBy('standard_id')
             ->map(function ($items) {
-                return $items->map(fn($c) => ['value' => $c->id, 'label' => $c->name])->values();
+                return $items->map(fn ($c) => ['value' => $c->id, 'label' => $c->name])->values();
             })
             ->toArray();
 
         return [
             'standards' => Standard::query()->pluck('name', 'id')->toArray(),
             'categories' => Category::query()
-                ->when($standardId, fn($q) => $q->where('standard_id', $standardId))
+                ->when($standardId, fn ($q) => $q->where('standard_id', $standardId))
                 ->pluck('name', 'id')
                 ->toArray(),
             'departments' => Department::query()
                 ->select('id', 'name', 'work_group')
                 ->orderBy('name')
                 ->get()
-                ->map(fn($d) => [
+                ->map(fn ($d) => [
                     'id' => $d->id,
                     'name' => $d->name,
                     'work_group' => $d->work_group,
@@ -487,8 +490,8 @@ class IndicatorController extends Controller
         // - If any criteria has status 0 => overall 0 (รอดำเนินการ)
         // - Else if any criteria has status 2 => overall 2 (เอกสารไม่ครบถ้วน)
         // - Else => 1 (เอกสารครบถ้วน)
-        $hasPending = $i->criterias->contains(fn($c) => (int) ($c->status ?? -1) === 0);
-        $hasIncomplete = $i->criterias->contains(fn($c) => (int) ($c->status ?? -1) === 2);
+        $hasPending = $i->criterias->contains(fn ($c) => (int) ($c->status ?? -1) === 0);
+        $hasIncomplete = $i->criterias->contains(fn ($c) => (int) ($c->status ?? -1) === 2);
         $criteriaStatus = $hasPending ? 0 : ($hasIncomplete ? 2 : 1);
 
         return [
@@ -515,7 +518,7 @@ class IndicatorController extends Controller
             // ทำให้ dashboard.blade เอาไป map หา department ได้
             'assignments' => $i->assignments->map(function ($a) {
                 // ถ้าในความสัมพันธ์ Assignment มี ->user ก็ใช้เลย ไม่งั้น fallback หาเอง
-                $user = $a->user ?? \App\Models\User::find($a->collector);
+                $user = $a->user ?? User::find($a->collector);
 
                 return [
                     'user' => $user ? [
@@ -554,6 +557,23 @@ class IndicatorController extends Controller
     /**
      * Insert criteria rows; return count for combination generation.
      */
+    private function sanitizeRichText(array $validated): array
+    {
+        foreach (['description', 'condition', 'comment', 'annotation'] as $field) {
+            if (array_key_exists($field, $validated)) {
+                $validated[$field] = $this->richText->sanitize($validated[$field]);
+            }
+        }
+
+        foreach ($validated['criteria'] ?? [] as $index => $criteria) {
+            if (array_key_exists('description', $criteria)) {
+                $validated['criteria'][$index]['description'] = $this->richText->sanitize($criteria['description']);
+            }
+        }
+
+        return $validated;
+    }
+
     private function syncCriterias(Indicator $indicator, array $criteria): int
     {
         $rows = [];
@@ -778,6 +798,7 @@ class IndicatorController extends Controller
             $name = trim((string) ($req['name'] ?? ''));
             if ($name === '') {
                 $sequence++;
+
                 continue;
             }
 

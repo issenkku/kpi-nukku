@@ -40,8 +40,10 @@ class UsersCrudTest extends TestCase
         $email = 'new.user@example.test';
         $this->actingAs($admin, 'sanctum')
             ->post('/users', [
-                'name' => 'New User',
-                'password' => 'password123',
+                'first_name' => 'New',
+                'last_name' => 'User',
+                'password' => 'password123!',
+                'password_confirmation' => 'password123!',
                 'email' => $email,
                 'phone' => '0123456789',
                 'department_id' => $dept->id,
@@ -55,7 +57,8 @@ class UsersCrudTest extends TestCase
         // Update (change name and phone)
         $this->actingAs($admin, 'sanctum')
             ->put("/users/{$created->id}", [
-                'name' => 'Updated Name',
+                'first_name' => 'Updated',
+                'last_name' => 'Name',
                 'email' => $email,
                 'phone' => '0987654321',
                 'department_id' => $dept->id,
@@ -64,7 +67,8 @@ class UsersCrudTest extends TestCase
             ])->assertStatus(302);
 
         $created->refresh();
-        $this->assertSame('Updated Name', $created->name);
+        $this->assertSame('Updated', $created->first_name);
+        $this->assertSame('Name', $created->last_name);
         $this->assertSame('0987654321', $created->phone);
 
         // Delete
@@ -75,4 +79,3 @@ class UsersCrudTest extends TestCase
         $this->assertDatabaseMissing('users', ['id' => $created->id]);
     }
 }
-

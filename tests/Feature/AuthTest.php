@@ -4,8 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 class AuthTest extends TestCase
 {
@@ -19,14 +19,14 @@ class AuthTest extends TestCase
         // login
         $response = $this->post('/login', [
             'email' => $user->email,
-            'password' => 'secret123'
+            'password' => 'secret123',
         ]);
-        $response->assertRedirect('/home');
+        $response->assertOk()->assertJson(['redirect' => '/dashboard']);
         $this->assertAuthenticatedAs($user);
 
         // logout
         $response = $this->post('/logout');
-        $response->assertRedirect('/');
+        $response->assertRedirect('/login');
         $this->assertGuest();
     }
 }

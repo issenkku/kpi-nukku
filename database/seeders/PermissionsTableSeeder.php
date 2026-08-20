@@ -5,10 +5,10 @@ namespace Database\Seeders;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class PermissionsTableSeeder extends Seeder
 {
-
     /**
      * Auto generated seed file
      *
@@ -17,7 +17,7 @@ class PermissionsTableSeeder extends Seeder
     public function run()
     {
         // Clear cached roles and permissions
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
         // Create permissions
         $permissions = [
@@ -29,7 +29,6 @@ class PermissionsTableSeeder extends Seeder
             'delete-indicator',
             'export-indicator',
             'import-indicator',
-
 
             // ===== Users =====
             'view-users',
@@ -74,7 +73,6 @@ class PermissionsTableSeeder extends Seeder
             'edit-sar_report',
             'delete-sar_report',
 
-
             // ===== Dashboard =====
             'view-dashboard',
             'export-dashboard',
@@ -84,9 +82,8 @@ class PermissionsTableSeeder extends Seeder
             'show-dashboard-kpi-user',
 
             // ===== Auth/โปรไฟล์พื้นฐาน (เผื่อใช้) =====
-            'edit-profile'
+            'edit-profile',
         ];
-
 
         foreach ($permissions as $permission) {
             Permission::findOrCreate($permission, 'web');
@@ -156,8 +153,12 @@ class PermissionsTableSeeder extends Seeder
             'view-dashboard',
             'export-dashboard',
 
+            // ===== Dashboard KPI per User =====
+            'view-dashboard-kpi-user',
+            'show-dashboard-kpi-user',
+
             // ===== Auth/โปรไฟล์พื้นฐาน (เผื่อใช้) =====
-            'edit-profile'
+            'edit-profile',
 
         ]);
 
@@ -204,13 +205,13 @@ class PermissionsTableSeeder extends Seeder
             'create-sar_report',
             'edit-sar_report',
             'delete-sar_report',
-            
+
             // ===== Dashboard KPI per User =====
             'view-dashboard-kpi-user',
             'show-dashboard-kpi-user',
 
             // ===== Auth/โปรไฟล์พื้นฐาน (เผื่อใช้) =====
-            'edit-profile'
+            'edit-profile',
 
         ]);
 
@@ -252,9 +253,8 @@ class PermissionsTableSeeder extends Seeder
             'view-dashboard-kpi-user',
             'show-dashboard-kpi-user',
 
-            
             // ===== Auth/โปรไฟล์พื้นฐาน (เผื่อใช้) =====
-            'edit-profile'
+            'edit-profile',
         ]);
 
         $user = Role::firstOrCreate(['name' => 'user']);

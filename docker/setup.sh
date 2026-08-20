@@ -14,11 +14,18 @@ fwrite(STDERR, "DB not ready after wait\n");
 exit(1);
 '
 
-echo "[setup] Installing composer deps"
-composer install --no-interaction --prefer-dist --optimize-autoloader
+if [ ! -f .env ]; then
+  echo "[setup] Missing .env. Copy .env.example to .env and configure it first." >&2
+  exit 1
+fi
+
+echo "[setup] Installing production composer dependencies"
+composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
 echo "[setup] App key + storage link"
-php artisan key:generate --force || true
+if ! grep -Eq '^APP_KEY=base64:.+' .env; then
+  php artisan key:generate
+fi
 php artisan storage:link || true
 
 echo "[setup] Note: keep dbdata volume (avoid 'docker compose down -v') to retain data"
@@ -28,7 +35,10 @@ chown -R www-data:www-data storage bootstrap/cache public/storage || true
 chmod -R ug+rwX storage bootstrap/cache public/storage || true
 
 echo "[setup] Running migrations"
-php artisan migrate
+php artisan migrate --force
+
+echo "[setup] Seeding roles and permissions"
+php artisan db:seed --class='Database\Seeders\RolesAndPermissionsSeeder' --force
 
 echo "[setup] Copying fonts (if available)"
 php artisan fonts:copy || true

@@ -3,30 +3,53 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
-use App\Models\User;
 use App\Models\Department;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Role;
 
 class AuthSSOController extends Controller
 {
-    public function redirectToSSO()
+    public function redirectToSSO(Request $request)
     {
         $appId = config('sso.app_id');
-        // dd($appId);
-        return redirect("https://sso-uat-web.kku.ac.th/login?app={$appId}");
+        $webBaseUrl = rtrim((string) config('sso.web_base_url'), '/');
+
+        if ($appId === '' || $webBaseUrl === '') {
+            abort(503, 'SSO is not configured.');
+        }
+
+        $state = Str::random(64);
+        $request->session()->put('sso_state', $state);
+
+        return redirect($webBaseUrl.'/login?'.http_build_query([
+            'app' => $appId,
+            'state' => $state,
+        ]));
     }
 
     public function callback(Request $request)
     {
+        $expectedState = (string) $request->session()->pull('sso_state', '');
+        $receivedState = (string) $request->query('state', '');
+        if ($expectedState === '' || $receivedState === '' || ! hash_equals($expectedState, $receivedState)) {
+            Log::warning('SSO callback rejected due to invalid state.');
+
+            return redirect('/login')->with('error', 'Invalid SSO state. Please try again.');
+        }
+
         $code = $request->query('code');
-        // echo $code; exit;
-        if (!$code) {
+        if (! $code) {
             return redirect('/login')->with('error', 'Missing authorization code from SSO.');
+        }
+
+        $apiBaseUrl = rtrim((string) config('sso.api_base_url'), '/');
+        if ($apiBaseUrl === '') {
+            abort(503, 'SSO is not configured.');
         }
 
         $payload = [
@@ -35,41 +58,45 @@ class AuthSSOController extends Controller
             'clientId' => config('sso.client_id'),
             'clientSecret' => config('sso.client_secret'),
         ];
-        $response = Http::withHeaders(['Content-Type' => 'application/json',])->post('https://sso-uat-api.kku.ac.th/auth.token', $payload);
+        $response = Http::asJson()
+            ->timeout(15)
+            ->post($apiBaseUrl.'/auth.token', $payload);
 
         if ($response->failed()) {
             Log::warning('SSO token exchange failed', [
                 'status' => $response->status(),
-                'body' => $response->body(),
                 'redirectUrl' => $payload['redirectUrl'],
             ]);
-            return redirect('/login')->with('error', 'SSO token exchange failed (' . $response->status() . ').');
+
+            return redirect('/login')->with('error', 'SSO token exchange failed ('.$response->status().').');
         }
 
         $data = $response->json();
-     
-        if (!($data['ok'] ?? false)) {
-            Log::warning('SSO token response not ok', ['data' => $data]);
+
+        if (! ($data['ok'] ?? false)) {
+            Log::warning('SSO token response was not accepted by the provider.');
+
             return redirect('/login')->with('error', 'SSO response invalid.');
         }
 
         $accessToken = $data['accessToken'] ?? null;
-        if (!$accessToken) {
-            Log::warning('SSO accessToken missing', ['data' => $data]);
+        if (! $accessToken) {
+            Log::warning('SSO access token missing from provider response.');
+
             return redirect('/login')->with('error', 'SSO access token missing.');
         }
 
         $profileRes = Http::withToken($accessToken)
-            ->post('https://sso-uat-api.kku.ac.th/user.profile');
+            ->timeout(15)
+            ->post($apiBaseUrl.'/user.profile');
         if ($profileRes->failed()) {
             Log::warning('SSO profile fetch failed', [
                 'status' => $profileRes->status(),
-                'body' => $profileRes->body(),
             ]);
-            return redirect('/login')->with('error', 'SSO profile fetch failed (' . $profileRes->status() . ').');
+
+            return redirect('/login')->with('error', 'SSO profile fetch failed ('.$profileRes->status().').');
         }
         $profile = $profileRes->json()['profile'] ?? [];
-        Log::info('SSO profile payload', ['profile' => $profile]);
 
         // Resolve or create local user, then log in and redirect by role
         $email = $profile['email']
@@ -87,7 +114,7 @@ class AuthSSOController extends Controller
         $user = null;
 
         // If no email provided, attempt to find existing user by common email patterns from username
-        if (!$email && $username) {
+        if (! $email && $username) {
             foreach ([$username.'@kku.ac.th', $username.'@kkumail.com', $username.'@kku.local'] as $guess) {
                 $existing = User::where('email', $guess)->first();
                 if ($existing) {
@@ -99,20 +126,21 @@ class AuthSSOController extends Controller
         }
 
         // As last resort, synthesize a local-only email so creation passes DB unique not-null constraint
-        if (!$email && $username) {
+        if (! $email && $username) {
             $email = $username.'@kku.local';
         }
 
-        if (!$email) {
-            Log::warning('SSO profile missing usable identifier', ['profile' => $profile]);
+        if (! $email) {
+            Log::warning('SSO profile missing a usable identifier.');
+
             return redirect('/login')->with('error', 'SSO profile missing email/username.');
         }
 
-        if (!$user) {
+        if (! $user) {
             $user = User::where('email', $email)->first();
         }
 
-        if (!$user) {
+        if (! $user) {
             // Ensure a valid department exists (users.department_id is not-null)
             $deptName = $profile['facultyName'] ?? ($profile['departmentName'] ?? 'Unassigned');
             $department = Department::firstOrCreate(['name' => $deptName ?: 'Unassigned']);
@@ -135,6 +163,12 @@ class AuthSSOController extends Controller
             }
         }
 
+        if (! $user->status) {
+            Log::notice('Inactive local account rejected during SSO login.', ['user_id' => $user->id]);
+
+            return redirect('/login')->with('error', 'This account has been suspended.');
+        }
+
         Auth::login($user);
         $request->session()->regenerate();
 
@@ -151,12 +185,22 @@ class AuthSSOController extends Controller
             $redirect = '/dashboardkpi';
         }
 
-        return redirect($redirect)->with('success', 'Login success: ' . ($profile['firstname'] ?? ''));
+        return redirect($redirect)->with('success', 'Login success: '.($profile['firstname'] ?? ''));
     }
 
-    public function logout()
+    public function logout(Request $request)
     {
-        $appId = config('sso.app_id');
-        return redirect("https://sso-uat-web.kku.ac.th/logout?app={$appId}");
+        $appId = (string) config('sso.app_id');
+        $webBaseUrl = rtrim((string) config('sso.web_base_url'), '/');
+
+        Auth::logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        if ($appId === '' || $webBaseUrl === '') {
+            return redirect('/login');
+        }
+
+        return redirect($webBaseUrl.'/logout?'.http_build_query(['app' => $appId]));
     }
 }

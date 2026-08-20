@@ -1,29 +1,28 @@
 <?php
 
 // use App\Http\Controllers\Auth\Auth_ssoController; // deprecated
+use App\Http\Controllers\AffiliationsController;
+use App\Http\Controllers\Api\IndicatorApiController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\AuthSSOController;
 use App\Http\Controllers\CategorieController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DashboardExportController;
-use App\Http\Controllers\DashboardKpiUserController;
 use App\Http\Controllers\DashboardKpiAdminController;
-use App\Http\Controllers\AffiliationsController;
+use App\Http\Controllers\DashboardKpiUserController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\EvidenceController;
 use App\Http\Controllers\IndicatorController;
 use App\Http\Controllers\IndicatorPresetController;
-use App\Http\Controllers\KKUEmailController;
-use App\Http\Controllers\KKUMailController;
-use App\Http\Controllers\NotifycationController;
-use App\Http\Controllers\SarReportController;
-use App\Http\Controllers\SarReportExportController;
-use App\Http\Controllers\SettingController;
-use App\Http\Controllers\StandardController;
 use App\Http\Controllers\KKUApiController;
+use App\Http\Controllers\NotifycationController;
+use App\Http\Controllers\ProgressReportController;
+use App\Http\Controllers\SarReportController;
+use App\Http\Controllers\SettingController;
+use App\Http\Controllers\SettingNotifyController;
+use App\Http\Controllers\StandardController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
-use SebastianBergmann\CodeCoverage\Report\Html\Dashboard;
 
 /*
 |--------------------------------------------------------------------------
@@ -32,10 +31,10 @@ use SebastianBergmann\CodeCoverage\Report\Html\Dashboard;
 */
 
 // Minimal API endpoints under web guard to support tests
-Route::middleware('auth')->prefix('api')->group(function () {
-    Route::post('indicators', [\App\Http\Controllers\Api\IndicatorApiController::class, 'store']);
-    Route::put('indicators/{indicator}', [\App\Http\Controllers\Api\IndicatorApiController::class, 'update']);
-    Route::delete('indicators/{indicator}', [\App\Http\Controllers\Api\IndicatorApiController::class, 'destroy']);
+Route::middleware(['auth', 'role:super_admin'])->prefix('api')->group(function () {
+    Route::post('indicators', [IndicatorApiController::class, 'store']);
+    Route::put('indicators/{indicator}', [IndicatorApiController::class, 'update']);
+    Route::delete('indicators/{indicator}', [IndicatorApiController::class, 'destroy']);
 });
 Route::middleware('guest')->group(function () {
     // Redirect root to login
@@ -49,11 +48,10 @@ Route::middleware('guest')->group(function () {
         Route::post('/login', 'login');
     });
 
-Route::get('/auth/sso/login', [AuthSSOController::class, 'redirectToSSO'])->name('sso.login');
-Route::get('/auth/callback/login', [AuthSSOController::class, 'callback'])->name('sso.callback');
-// Additional callback path to match SSO-UAT config (https://nusarnc.kku.ac.th/auth)
-Route::get('/auth', [AuthSSOController::class, 'callback'])->name('sso.callback.alt');
-Route::get('/auth/sso/logout', [AuthSSOController::class, 'logout'])->name('sso.logout');
+    Route::get('/auth/sso/login', [AuthSSOController::class, 'redirectToSSO'])->name('sso.login');
+    Route::get('/auth/callback/login', [AuthSSOController::class, 'callback'])->name('sso.callback');
+    // Additional callback path for providers configured with a short callback URL.
+    Route::get('/auth', [AuthSSOController::class, 'callback'])->name('sso.callback.alt');
 });
 
 /*
@@ -63,10 +61,9 @@ Route::get('/auth/sso/logout', [AuthSSOController::class, 'logout'])->name('sso.
 */
 
 Route::middleware('auth')->controller(AuthController::class)->group(function () {
-    // Allow both POST (recommended) and GET (convenience) for logout
     Route::post('/logout', 'logout')->name('logout');
-    Route::get('/logout', 'logout')->name('logout.get');
 });
+Route::middleware('auth')->get('/auth/sso/logout', [AuthSSOController::class, 'logout'])->name('sso.logout');
 
 // Minimal home route for post-login redirect used in tests
 // Route::middleware('auth')->get('/home', function () {
@@ -101,9 +98,6 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/{id}/show', [IndicatorController::class, 'show'])
             ->name('show')
             ->middleware('permission:view-indicator');
-
-
-
 
         // Create
         Route::get('/create', [IndicatorController::class, 'create'])
@@ -276,7 +270,7 @@ Route::middleware(['auth'])->group(function () {
             ->name('store')
             ->middleware('permission:create-settings');
         // Send notifications immediately using current form values
-        Route::post('/send-now', [\App\Http\Controllers\SettingNotifyController::class, 'sendNow'])
+        Route::post('/send-now', [SettingNotifyController::class, 'sendNow'])
             ->name('sendNow')
             ->middleware('permission:edit-settings');
 
@@ -334,7 +328,7 @@ Route::middleware(['auth'])->group(function () {
             ->name('download')
             ->whereNumber('id')
             ->middleware('permission:download-evidence');
-        // Preview 
+        // Preview
         Route::get('/{id}/preview', [EvidenceController::class, 'preview'])
             ->name('preview')
             ->whereNumber('id')
@@ -386,32 +380,36 @@ Route::middleware(['auth'])->group(function () {
     // ===== DASHBOARD KPI ROUTES =====
     Route::prefix('dashboardkpi')->name('dashboardkpi.')->group(function () {
 
-        Route::get('/', [DashboardKpiUserController::class, 'index'])->name('index');
+        Route::get('/', [DashboardKpiUserController::class, 'index'])
+            ->name('index')
+            ->middleware('permission:view-dashboard-kpi-user');
 
-        Route::prefix('/user')->name('user.')->group(function () {
+        Route::prefix('/user')->name('user.')->middleware([
+            'permission:view-dashboard-kpi-user',
+            'permission:show-dashboard-kpi-user',
+        ])->group(function () {
             Route::get('/kpi/{id}', [DashboardKpiUserController::class, 'show'])->name('show');
             Route::put('/kpi/{id}/save-variables', [DashboardKpiUserController::class, 'saveVariables'])->name('saveVariables');
             Route::post('/kpi/{id}/request-correction', [DashboardKpiUserController::class, 'requestCorrection'])->name('requestCorrection');
         });
 
-        Route::prefix('/admin')->name('admin.')->group(function () {
+        Route::prefix('/admin')->name('admin.')->middleware('permission:view-indicator-dashboard')->group(function () {
             Route::get('/kpi/{id}', [DashboardKpiAdminController::class, 'show'])->name('show');
-            Route::put('/kpi/{id}/save-variables', [DashboardKpiAdminController::class, 'saveVariables'])->name('saveVariables');
+            Route::put('/kpi/{id}/save-variables', [DashboardKpiAdminController::class, 'saveVariables'])
+                ->name('saveVariables')
+                ->middleware('permission:edit-indicator');
             // Route::put('/kpi/{id}/update-status', [DashboardKpiAdminController::class, 'updateStatus'])->name('updateStatus');
         });
     });
 
     // ===== REPORTS ROUTES =====
     Route::prefix('reports')->name('reports.')->middleware('permission:view-dashboard')->group(function () {
-        Route::get('/progress', [\App\Http\Controllers\ProgressReportController::class, 'index'])->name('progress');
+        Route::get('/progress', [ProgressReportController::class, 'index'])->name('progress');
     });
-});
 
-// Simple export route for tests: returns an empty XLSX payload
-Route::middleware('auth')->get('/export/indicators', function () {
-    return response('', 200, [
-        'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    ]);
+    Route::post('/indicators/{id}/notify', [NotifycationController::class, 'notifyCollectors'])
+        ->name('notify')
+        ->middleware('permission:edit-indicator');
 });
 // Route::resource('sar_reports', SarReportController::class);
 // routes/web.php
@@ -437,68 +435,3 @@ Route::middleware('auth')->get('/export/indicators', function () {
 // Route::get('/sar_reports/{report}/export/pdf', [SarReportController::class, 'export'])
 //     ->name('sar_reports.export.pdf')
 //     ->defaults('type', 'pdf');
-
-use Barryvdh\DomPDF\Facade\Pdf;
-
-Route::get('/test', function () {
-    // Ensure Thai-capable fonts are available to Dompdf
-    try {
-        $pub = public_path('fonts');
-        $dst = storage_path('fonts');
-        if (!is_dir($dst)) @mkdir($dst, 0755, true);
-        if (is_dir($pub)) {
-            foreach (glob($pub . DIRECTORY_SEPARATOR . '*.ttf') as $f) {
-                $t = $dst . DIRECTORY_SEPARATOR . basename($f);
-                if (!file_exists($t)) @copy($f, $t);
-            }
-        }
-        $sar = $dst . DIRECTORY_SEPARATOR . 'Sarabun-Regular.ttf';
-        $sarb = $dst . DIRECTORY_SEPARATOR . 'Sarabun-Bold.ttf';
-        if (!file_exists($sar) || filesize($sar) < 200000 || !file_exists($sarb) || filesize($sarb) < 200000) {
-            $winFonts = getenv('WINDIR') ? getenv('WINDIR') . DIRECTORY_SEPARATOR . 'Fonts' : 'C:\\Windows\\Fonts';
-            $tahoma = $winFonts . DIRECTORY_SEPARATOR . 'tahoma.ttf';
-            $tahomab = $winFonts . DIRECTORY_SEPARATOR . 'tahomabd.ttf';
-            if (@is_file($tahoma) && @is_file($tahomab)) {
-                @copy($tahoma, $sar);
-                @copy($tahomab, $sarb);
-            }
-        }
-    } catch (\Throwable $e) {
-    }
-
-    $pdf = Pdf::loadView('pdf_test')
-        ->setPaper('a4', 'portrait')
-        ->setOptions([
-            'isHtml5ParserEnabled' => true,
-            'isRemoteEnabled' => true,
-            'defaultFont' => 'SarabunLocal',
-            'enableFontSubsetting' => false,
-            'fontDir' => storage_path('fonts'),
-            'fontCache' => storage_path('fonts'),
-            'chroot' => base_path(),
-            'log_output_file' => storage_path('logs/dompdf.log'),
-            'logOutputFile' => storage_path('logs/dompdf.log'),
-        ]);
-
-    // Explicitly register the Sarabun font family with Dompdf's font metrics
-    try {
-        $dompdf = $pdf->getDomPDF();
-        $fm = $dompdf->getFontMetrics();
-        $fm->registerFont('SarabunLocal', [
-            'normal' => storage_path('fonts/Sarabun-Regular.ttf'),
-            'bold'   => storage_path('fonts/Sarabun-Bold.ttf'),
-        ]);
-    } catch (\Throwable $e) {
-        // ignore
-    }
-    return $pdf->stream('thai-test.pdf');
-});
-
-// View raw HTML of the same template to verify encoding independent of Dompdf
-Route::get('/test-html', function () {
-    return view('pdf_test');
-});
-
-Route::post('/{id}/notify', [NotifycationController::class, 'notifyCollectors'])
-    ->name('notify')
-;

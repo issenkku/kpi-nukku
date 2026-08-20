@@ -19,12 +19,12 @@ class AuthController extends Controller
 
     public function login(Request $request)
     {
-        // $credentials = $request->validate([
-        //     'email' => ['required', 'string'],
-        //     'password' => ['required', 'string'],
-        // ]);
+        $credentials = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
 
-        $key = Str::lower($request->input('email')) . '|' . $request->ip();
+        $key = Str::lower($credentials['email']).'|'.$request->ip();
         $maxAttempts = 5;
         $decaySeconds = 60;
 
@@ -34,9 +34,9 @@ class AuthController extends Controller
             ], 429);
         }
 
-        $user = User::where('email', $request->email)->first();
+        $user = User::where('email', $credentials['email'])->first();
 
-        if (! $user || ! Hash::check($request->password, $user->password)) {
+        if (! $user || ! Hash::check($credentials['password'], $user->password)) {
             RateLimiter::hit($key, $decaySeconds);
 
             return response()->json([
@@ -44,7 +44,7 @@ class AuthController extends Controller
             ], 401);
         }
 
-        if (!$user->status) {
+        if (! $user->status) {
             return response()->json([
                 'message' => 'บัญชีผู้ใช้นี้ถูกระงับการใช้งาน',
             ], 403);
@@ -70,7 +70,6 @@ class AuthController extends Controller
 
         return response()->json(['redirect' => $redirect]);
     }
-
 
     public function logout(Request $request)
     {

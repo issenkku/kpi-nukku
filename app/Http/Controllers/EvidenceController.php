@@ -9,25 +9,27 @@ use App\Models\Evidence;
 use App\Models\Indicator;
 use App\Models\Standard;
 use App\Models\User;
-use Illuminate\Http\Request;
+use App\Support\RichTextSanitizer;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\DB;
-
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class EvidenceController extends Controller
 {
+    public function __construct(private readonly RichTextSanitizer $richText) {}
+
     public function index(Request $request)
     {
         // preload ความสัมพันธ์ครบ
         $query = Evidence::with([
             'criteria.indicator.category.standard',
             'criteria.indicator.assignments.collectorUser.department',
-            'user'
+            'user',
         ]);
 
         // 🟢 ถ้า role = user → แสดงเฉพาะตัวชี้วัดที่มอบหมายให้ + หลักฐานของตัวเอง
@@ -84,7 +86,7 @@ class EvidenceController extends Controller
             3 => 'ครบถ้วนตามเกณฑ์',
             4 => 'ยังไม่ครบถ้วนตามเกณฑ์',
         ];
-        $statusList = Indicator::pluck('status')->unique()->map(fn($s) => $statusMap[$s] ?? 'ไม่ทราบ');
+        $statusList = Indicator::pluck('status')->unique()->map(fn ($s) => $statusMap[$s] ?? 'ไม่ทราบ');
         // Pagination
         $perPage = (int) $request->input('per_page', 1000);
         $evidences = $query->paginate($perPage)->withQueryString();
@@ -92,25 +94,26 @@ class EvidenceController extends Controller
         // คำนวณขนาดไฟล์รวม
         $evidences->getCollection()->transform(function ($evidence) {
             $totalSize = 0;
-            if (!empty($evidence->path['files'])) {
+            if (! empty($evidence->path['files'])) {
                 foreach ($evidence->path['files'] as $f) {
                     $totalSize += $f['size'] ?? 0;
                 }
             }
             $evidence->total_size = $totalSize;
             $evidence->total_size_human = $this->formatFileSize($totalSize);
+
             return $evidence;
         });
 
         $indicatorIds = $evidences->getCollection()
-            ->map(fn($e) => optional(optional($e->criteria)->indicator)->id)
+            ->map(fn ($e) => optional(optional($e->criteria)->indicator)->id)
             ->filter()
             ->unique()
             ->values();
 
         $indicatorDocStatus = Indicator::with([
             'criterias.evidenceRequirements',
-            'criterias.evidences' => fn($q) => $q->where('status', true),
+            'criterias.evidences' => fn ($q) => $q->where('status', true),
         ])
             ->whereIn('id', $indicatorIds)
             ->get()
@@ -151,7 +154,7 @@ class EvidenceController extends Controller
             });
 
         $indicatorGroups = Indicator::with([
-            'criterias' => fn($q) => $q->orderBy('sequence')->orderBy('name'),
+            'criterias' => fn ($q) => $q->orderBy('sequence')->orderBy('name'),
             'criterias.evidenceRequirements',
             'criterias.evidences.requirement',
             'criterias.evidences.user',
@@ -177,6 +180,7 @@ class EvidenceController extends Controller
                         $num = (int) $after;
                     }
                 }
+
                 return sprintf('%02d-%06d-%s', $rank, $num, $code);
             })
             ->values();
@@ -197,11 +201,13 @@ class EvidenceController extends Controller
 
     public function create(Criteria $criteria)
     {
+        $this->authorizeCriteriaAccess($criteria);
 
         $criterias = Criteria::orderBy('name')->get(['id', 'name']);
 
         if ($criterias->isEmpty()) {
             Log::warning('No criterias found when trying to create evidence.');
+
             return redirect()
                 ->route('dashboard.index')
                 ->with('warning', 'ยังไม่มีเกณฑ์ที่ใช้งานอยู่ กรุณาเพิ่ม/เปิดใช้งานเกณฑ์ก่อน');
@@ -212,83 +218,84 @@ class EvidenceController extends Controller
         // ]);
 
         return view('evidences.create', [
-            'criterias'   => $criterias,
+            'criterias' => $criterias,
             'criteria_id' => $criteria->id, // ✅ ส่งไปด้วย
-            'criteria'    => $criteria      // ถ้าอยากใช้ทั้ง object
+            'criteria' => $criteria,      // ถ้าอยากใช้ทั้ง object
         ]);
     }
-
-
 
     public function store(Request $request)
     {
 
         $request->validate([
-            'criteria_id'       => 'required|integer|exists:criterias,id',
-            'files.*'           => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx',
-            'file_names'        => 'nullable|array',
-            'file_names.*'      => 'nullable|string|max:255',
+            'criteria_id' => 'required|integer|exists:criterias,id',
+            'files.*' => 'nullable|file|max:204800|mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx,ppt,pptx',
+            'file_names' => 'nullable|array',
+            'file_names.*' => 'nullable|string|max:255',
             'file_requirement_ids' => 'nullable|array',
             'file_requirement_ids.*' => 'nullable|integer',
-            'additional_urls'   => 'nullable|array',
+            'additional_urls' => 'nullable|array',
             'additional_urls.*' => 'nullable|url|max:2048',
-            'url_names'         => 'nullable|array',
-            'url_names.*'       => 'nullable|string|max:255',
+            'url_names' => 'nullable|array',
+            'url_names.*' => 'nullable|string|max:255',
             'url_requirement_ids' => 'nullable|array',
             'url_requirement_ids.*' => 'nullable|integer',
-            'detail'            => 'nullable|string|max:16777215',
+            'detail' => 'nullable|string|max:16777215',
         ]);
-
 
         $uploadedFiles = [];
         $savedEvidences = []; // ✅ เก็บ evidences หลายรายการ
 
         try {
-            $urls     = collect($request->input('additional_urls', []));
+            $urls = collect($request->input('additional_urls', []));
             $urlNames = collect($request->input('url_names', []));
             $urlRequirementIds = collect($request->input('url_requirement_ids', []));
 
             $urlEntries = $urls
                 ->map(function ($url, $i) use ($urlNames, $urlRequirementIds) {
                     return [
-                        'url'  => $url,
+                        'url' => $url,
                         'name' => $urlNames->get($i) ?: 'หลักฐาน URL',
                         'requirement_id' => $urlRequirementIds->get($i),
                     ];
                 })
-                ->filter(fn($entry) => filled($entry['url']))
+                ->filter(fn ($entry) => filled($entry['url']))
                 ->values();
 
-            $hasFiles  = $request->hasFile('files');
-            $hasUrls   = $urlEntries->isNotEmpty();
-            $hasDetail = filled($request->input('detail'));
+            $hasFiles = $request->hasFile('files');
+            $hasUrls = $urlEntries->isNotEmpty();
+            $sanitizedDetail = $this->richText->sanitize($request->input('detail'));
+            $hasDetail = filled($sanitizedDetail);
             $detailAssigned = false; // one detail per criteria
 
-            if (!$hasFiles && !$hasUrls && !$hasDetail) {
+            if (! $hasFiles && ! $hasUrls && ! $hasDetail) {
                 if ($request->expectsJson()) {
                     return response()->json([
                         'success' => false,
                         'message' => 'กรุณาระบุข้อมูลอย่างน้อย 1 รายการ (ไฟล์, URL หรือรายละเอียด)',
                     ], 422);
                 }
+
                 return back()->withInput()->withErrors([
                     'general' => 'กรุณาระบุข้อมูลอย่างน้อย 1 รายการ (ไฟล์, URL หรือรายละเอียด)',
                 ]);
             }
 
             // ✅ chain: criteria -> indicator -> category -> standard
-            $criteria  = Criteria::with('indicator.category.standard')->findOrFail($request->criteria_id);
+            $criteria = Criteria::with('indicator.category.standard')->findOrFail($request->criteria_id);
+            $this->authorizeCriteriaAccess($criteria);
             $indicator = $criteria->indicator;
-            $category  = $indicator->category;
-            $standard  = $category->standard;
+            $category = $indicator->category;
+            $standard = $category->standard;
 
-            if (!$indicator || !$category || !$standard) {
+            if (! $indicator || ! $category || ! $standard) {
                 if ($request->expectsJson()) {
                     return response()->json([
                         'success' => false,
                         'message' => 'กรุณาตรวจสอบว่าตัวบ่งชี้นี้มีการผูกกับหมวดหมู่และมาตรฐานแล้ว',
                     ], 422);
                 }
+
                 return back()->withErrors([
                     'general' => 'กรุณาตรวจสอบว่าตัวบ่งชี้นี้มีการผูกกับหมวดหมู่และมาตรฐานแล้ว',
                 ]);
@@ -296,7 +303,7 @@ class EvidenceController extends Controller
 
             $requirements = $criteria->evidenceRequirements()->orderBy('sequence')->get();
             $requiresEvidenceName = $requirements->isNotEmpty();
-            $validRequirementIds = $requirements->pluck('id')->map(fn($id) => (int) $id)->all();
+            $validRequirementIds = $requirements->pluck('id')->map(fn ($id) => (int) $id)->all();
             $fileRequirementIds = collect($request->input('file_requirement_ids', []));
             $requiredTotal = (int) ($criteria->required_evidence_total ?? 0);
 
@@ -304,7 +311,7 @@ class EvidenceController extends Controller
                 if ($hasFiles) {
                     foreach ($request->file('files') as $i => $file) {
                         $rid = (int) ($fileRequirementIds->get($i) ?? 0);
-                        if (!in_array($rid, $validRequirementIds, true)) {
+                        if (! in_array($rid, $validRequirementIds, true)) {
                             $message = 'กรุณาเลือกชื่อหลักฐานให้ครบถ้วนสำหรับไฟล์ที่อัปโหลด';
                             if ($request->expectsJson()) {
                                 return response()->json([
@@ -312,6 +319,7 @@ class EvidenceController extends Controller
                                     'message' => $message,
                                 ], 422);
                             }
+
                             return back()->withInput()->withErrors([
                                 'general' => $message,
                             ]);
@@ -322,7 +330,7 @@ class EvidenceController extends Controller
                 if ($hasUrls) {
                     foreach ($urlEntries as $entry) {
                         $rid = (int) ($entry['requirement_id'] ?? 0);
-                        if (!in_array($rid, $validRequirementIds, true)) {
+                        if (! in_array($rid, $validRequirementIds, true)) {
                             $message = 'กรุณาเลือกชื่อหลักฐานให้ครบถ้วนสำหรับ URL ที่แนบ';
                             if ($request->expectsJson()) {
                                 return response()->json([
@@ -330,6 +338,7 @@ class EvidenceController extends Controller
                                     'message' => $message,
                                 ], 422);
                             }
+
                             return back()->withInput()->withErrors([
                                 'general' => $message,
                             ]);
@@ -359,13 +368,14 @@ class EvidenceController extends Controller
                     $existingCount = Evidence::where('criteria_id', $criteria->id)->count();
                     $incoming = array_sum($incomingCounts);
                     if ($incoming > 0 && $existingCount + $incoming > $requiredTotal) {
-                        $message = 'จำนวนหลักฐานเกินกว่าที่กำหนด (' . $requiredTotal . ' รายการ)';
+                        $message = 'จำนวนหลักฐานเกินกว่าที่กำหนด ('.$requiredTotal.' รายการ)';
                         if ($request->expectsJson()) {
                             return response()->json([
                                 'success' => false,
                                 'message' => $message,
                             ], 422);
                         }
+
                         return back()->withInput()->withErrors([
                             'general' => $message,
                         ]);
@@ -374,8 +384,8 @@ class EvidenceController extends Controller
             }
 
             // ใช้ slug กันชื่อไทย/ช่องว่าง
-            $standardSegment = $this->safeFolderSegment($standard->name ?? '', 'standard-' . $standard->name);
-            $categorySegment = $this->safeFolderSegment($category->name ?? '', 'category-' . $category->name);
+            $standardSegment = $this->safeFolderSegment($standard->name ?? '', 'standard-'.$standard->name);
+            $categorySegment = $this->safeFolderSegment($category->name ?? '', 'category-'.$category->name);
 
             $folder = implode('/', [
                 'evidences',
@@ -392,45 +402,45 @@ class EvidenceController extends Controller
 
                 foreach ($request->file('files') as $i => $file) {
                     $originalName = $file->getClientOriginalName();
-                    $extension    = strtolower($file->getClientOriginalExtension());
+                    $extension = strtolower($file->getClientOriginalExtension());
 
                     // 🔹 ใช้ชื่อจาก input ถ้ามี ไม่งั้น fallback เป็นชื่อไฟล์เดิม
-                    $customName   = $customNames[$i] ?? pathinfo($originalName, PATHINFO_FILENAME);
-                    $safeName     = Str::slug(pathinfo($customName, PATHINFO_FILENAME), '_');
-                    $filename     = $safeName . '_' . uniqid() . '.' . $extension;
+                    $customName = $customNames[$i] ?? pathinfo($originalName, PATHINFO_FILENAME);
+                    $safeName = Str::slug(pathinfo($customName, PATHINFO_FILENAME), '_');
+                    $filename = $safeName.'_'.uniqid().'.'.$extension;
 
                     $path = $file->storeAs($folder, $filename, 'public');
 
                     $payload = [
                         'files' => [[
                             'original_name' => $originalName,
-                            'custom_name'   => $customName,
-                            'stored_name'   => $filename,
-                            'path'          => $path,
-                            'size'          => $file->getSize(),
-                            'mime_type'     => $file->getMimeType(),
-                            'icon'          => $this->getFileTypeIcon($file->getMimeType()),
-                            'size_human'    => $this->formatFileSize($file->getSize()),
-                        ]]
+                            'custom_name' => $customName,
+                            'stored_name' => $filename,
+                            'path' => $path,
+                            'size' => $file->getSize(),
+                            'mime_type' => $file->getMimeType(),
+                            'icon' => $this->getFileTypeIcon($file->getMimeType()),
+                            'size_human' => $this->formatFileSize($file->getSize()),
+                        ]],
                     ];
 
-                    $evidence = new Evidence();
-                    $evidence->path        = $payload;
+                    $evidence = new Evidence;
+                    $evidence->path = $payload;
                     // Assign detail only once per criteria (first file or first URL)
-                    if ($hasDetail && !$detailAssigned) {
-                        $evidence->detail = $request->input('detail');
+                    if ($hasDetail && ! $detailAssigned) {
+                        $evidence->detail = $sanitizedDetail;
                         $detailAssigned = true;
                     } else {
                         $evidence->detail = null;
                     }
-                    $evidence->status      = false;
+                    $evidence->status = false;
                     $evidence->criteria_id = $criteria->id;
                     $evidence->criteria_evidence_requirement_id = $requiresEvidenceName
                         ? (int) ($fileRequirementIds->get($i) ?? 0)
                         : null;
-                    $evidence->user_id     = Auth::id();
-                    $evidence->name        = $customName ?: $originalName; // 🔹 บันทึกชื่อใหม่
-                    $evidence->type        = $extension;
+                    $evidence->user_id = Auth::id();
+                    $evidence->name = $customName ?: $originalName; // 🔹 บันทึกชื่อใหม่
+                    $evidence->type = $extension;
                     $evidence->save();
 
                     $uploadedFiles[] = ['path' => $path];
@@ -442,23 +452,23 @@ class EvidenceController extends Controller
                 foreach ($urlEntries as $entry) {
                     $payload = ['urls' => [$entry['url']]];
 
-                    $evidence = new Evidence();
-                    $evidence->path        = $payload;
+                    $evidence = new Evidence;
+                    $evidence->path = $payload;
                     // Assign detail only once per criteria (first URL if not used by files)
-                    if ($hasDetail && !$detailAssigned) {
-                        $evidence->detail = $request->input('detail');
+                    if ($hasDetail && ! $detailAssigned) {
+                        $evidence->detail = $sanitizedDetail;
                         $detailAssigned = true;
                     } else {
                         $evidence->detail = null;
                     }
-                    $evidence->status      = true;
+                    $evidence->status = true;
                     $evidence->criteria_id = $criteria->id;
                     $evidence->criteria_evidence_requirement_id = $requiresEvidenceName
                         ? (int) ($entry['requirement_id'] ?? 0)
                         : null;
-                    $evidence->user_id     = Auth::id();
-                    $evidence->name        = $entry['name'];
-                    $evidence->type        = "url";
+                    $evidence->user_id = Auth::id();
+                    $evidence->name = $entry['name'];
+                    $evidence->type = 'url';
                     $evidence->save();
 
                     // Log::info('Evidence saved (url)', [
@@ -470,15 +480,15 @@ class EvidenceController extends Controller
             }
 
             // ========== 3) ถ้ามีแค่ Detail ==========
-            if (!$hasUrls && !$hasFiles && $hasDetail) {
+            if (! $hasUrls && ! $hasFiles && $hasDetail) {
                 // เก็บรายงานผลลง criterias.report เท่านั้น (ไม่สร้าง evidence ใหม่)
-                $criteria->report = $request->input('detail');
+                $criteria->report = $sanitizedDetail;
                 $criteria->save();
             }
 
             if ($hasDetail && ($hasFiles || $hasUrls)) {
                 // Sync report for quick access when evidences are not loaded
-                $criteria->report = $request->input('detail');
+                $criteria->report = $sanitizedDetail;
                 $criteria->save();
             }
 
@@ -503,12 +513,16 @@ class EvidenceController extends Controller
                     ->with('success', 'บันทึกหลักฐานเรียบร้อยแล้ว');
             }
         } catch (\Throwable $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             Log::error('Evidence store error', [
                 'exception' => $e->getMessage(),
             ]);
 
             // rollback ลบไฟล์ที่อัปโหลดแล้วถ้าเกิด error
-            if (!empty($uploadedFiles)) {
+            if (! empty($uploadedFiles)) {
                 foreach ($uploadedFiles as $f) {
                     Storage::disk('public')->delete($f['path'] ?? null);
                 }
@@ -526,8 +540,6 @@ class EvidenceController extends Controller
             ]);
         }
     }
-
-
 
     /**
      * คืน icon type ตาม MIME type
@@ -559,6 +571,7 @@ class EvidenceController extends Controller
         if ($slug === '' || $slug === '-') {
             return $fallback;
         }
+
         // Collapse duplicate separators just in case
         return preg_replace('/-+/', '-', $slug);
     }
@@ -574,11 +587,8 @@ class EvidenceController extends Controller
         $pow = min($pow, count($units) - 1);
         $bytes /= pow(1024, $pow);
 
-        return round($bytes, 2) . ' ' . $units[$pow];
+        return round($bytes, 2).' '.$units[$pow];
     }
-
-
-
 
     /**
      * Display the specified evidence.
@@ -587,15 +597,20 @@ class EvidenceController extends Controller
     {
         try {
             $evidence = Evidence::with(['criteria', 'user'])->findOrFail($id);
+            $this->authorizeEvidenceAccess($evidence);
 
             return response()->json([
                 'success' => true,
-                'data' => $evidence
+                'data' => $evidence,
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => 'Evidence not found'
+                'message' => 'Evidence not found',
             ], 404);
         }
     }
@@ -607,26 +622,36 @@ class EvidenceController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
-            'file' => 'sometimes|file',
+            'file' => 'sometimes|file|max:204800|mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx,ppt,pptx',
             'type' => 'sometimes|required|string|max:100',
             'detail' => 'nullable|string',
             'status' => 'boolean',
-            'criteria_id' => 'sometimes|required|exists:criteria,id',
+            'criteria_id' => 'sometimes|required|exists:criterias,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $evidence = Evidence::findOrFail($id);
+            $this->authorizeEvidenceAccess($evidence, write: true);
             $originalCriteriaId = $evidence->criteria_id;
 
             $updateData = $request->only(['name', 'type', 'detail', 'status', 'criteria_id']);
+            if (Auth::user()?->hasRole('user')) {
+                abort_if(array_key_exists('status', $updateData), 403);
+            }
+            if (array_key_exists('criteria_id', $updateData)) {
+                $this->authorizeCriteriaAccess(Criteria::findOrFail($updateData['criteria_id']));
+            }
+            if (array_key_exists('detail', $updateData)) {
+                $updateData['detail'] = $this->richText->sanitize($updateData['detail']);
+            }
 
             // Handle file upload if provided
             if ($request->hasFile('file')) {
@@ -636,7 +661,7 @@ class EvidenceController extends Controller
                 }
 
                 $file = $request->file('file');
-                $filename = time() . '_' . $file->getClientOriginalName();
+                $filename = time().'_'.$file->getClientOriginalName();
                 $path = $file->storeAs('evidence', $filename, 'public');
                 $updateData['path'] = $path;
             }
@@ -662,13 +687,16 @@ class EvidenceController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Evidence updated successfully',
-                'data' => $evidence
+                'data' => $evidence,
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update evidence',
-                'error' => $e->getMessage()
             ], 500);
         }
     }
@@ -680,12 +708,13 @@ class EvidenceController extends Controller
     {
         try {
             $evidence = Evidence::findOrFail($id);
+            $this->authorizeEvidenceAccess($evidence, write: true);
             $criteriaId = $evidence->criteria_id;
 
             // Delete associated files if they exist
             if (is_array($evidence->path) && isset($evidence->path['files'])) {
                 foreach ($evidence->path['files'] as $file) {
-                    if (!empty($file['path'])) {
+                    if (! empty($file['path'])) {
                         Storage::disk('public')->delete($file['path']);
                     }
                 }
@@ -700,6 +729,10 @@ class EvidenceController extends Controller
             // Flash success message to session
             return redirect()->back()->with('success', 'ลบหลักฐานเรียบร้อยแล้ว');
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             // Flash error message to session
             return redirect()->back()->with('error', 'เกิดข้อผิดพลาดในการลบหลักฐาน');
         }
@@ -708,12 +741,13 @@ class EvidenceController extends Controller
     public function preview($id)
     {
         $e = Evidence::findOrFail($id);
-        $raw  = $e->getRawOriginal('path');
+        $this->authorizeEvidenceAccess($e);
+        $raw = $e->getRawOriginal('path');
         $json = json_decode((string) $raw, true);
 
         if (json_last_error() === JSON_ERROR_NONE && isset($json['files'][0])) {
             $file = $json['files'][0];
-            $rel  = $this->normalizePath($file['path'] ?? null);
+            $rel = $this->normalizePath($file['path'] ?? null);
 
             if ($rel && Storage::disk('public')->exists($rel)) {
                 $absolutePath = Storage::disk('public')->path($rel);
@@ -722,7 +756,7 @@ class EvidenceController extends Controller
                 // ✅ Convert office → pdf
                 if (in_array($ext, ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'])) {
                     $tempDir = storage_path('app/converted');
-                    if (!is_dir($tempDir)) {
+                    if (! is_dir($tempDir)) {
                         mkdir($tempDir, 0775, true);
                     }
 
@@ -730,23 +764,23 @@ class EvidenceController extends Controller
                     if ($converted) {
                         return response()->file($converted, [
                             'Content-Type' => 'application/pdf',
-                            'Content-Disposition' => 'inline; filename="' . $e->name . '.pdf"'
+                            'Content-Disposition' => 'inline; filename="'.$e->name.'.pdf"',
                         ]);
                     }
                     // Fallback to online viewers if configured
                     $viewer = strtolower((string) env('EVIDENCE_OFFICE_VIEWER', 'server'));
-                    $publicUrl = asset('storage/' . ltrim($rel, '/'));
+                    $publicUrl = asset('storage/'.ltrim($rel, '/'));
                     if (in_array($viewer, ['office_online', 'office', 'msoffice', 'online', 'auto'])) {
-                        return redirect()->away('https://view.officeapps.live.com/op/embed.aspx?src=' . urlencode($publicUrl));
+                        return redirect()->away('https://view.officeapps.live.com/op/embed.aspx?src='.urlencode($publicUrl));
                     } elseif ($viewer === 'google' || $viewer === 'gdocs') {
-                        return redirect()->away('https://docs.google.com/gview?embedded=1&url=' . urlencode($publicUrl));
+                        return redirect()->away('https://docs.google.com/gview?embedded=1&url='.urlencode($publicUrl));
                     }
                 }
 
                 // ✅ ถ้าเป็น pdf/image อยู่แล้ว
                 return response()->file($absolutePath, [
                     'Content-Type' => $file['mime_type'] ?? $this->determineMime($absolutePath, null, $e->type ?? null),
-                    'Content-Disposition' => 'inline; filename="' . $e->name . '"'
+                    'Content-Disposition' => 'inline; filename="'.$e->name.'"',
                 ]);
             }
         }
@@ -754,31 +788,25 @@ class EvidenceController extends Controller
         return response()->json(['success' => false, 'message' => 'File not found'], 404);
     }
 
-
-
-
-
-
     /**
      * Download evidence file.
      */
-
-
     public function download($id)
     {
         $e = Evidence::findOrFail($id);
+        $this->authorizeEvidenceAccess($e);
 
         // ดึง JSON raw string โดยตรง
-        $raw  = $e->getRawOriginal('path');
+        $raw = $e->getRawOriginal('path');
         $json = json_decode((string) $raw, true);
 
         if (json_last_error() === JSON_ERROR_NONE && is_array($json)) {
             $files = $json['files'] ?? [];
-            $urls  = $json['urls'] ?? [];
+            $urls = $json['urls'] ?? [];
             // --- มีไฟล์เดียว ---
             if (count($files) === 1) {
                 $file = $files[0] ?? [];
-                $rel  = $this->normalizePath($file['path'] ?? null);
+                $rel = $this->normalizePath($file['path'] ?? null);
 
                 if ($rel && Storage::disk('public')->exists($rel)) {
                     $absolutePath = Storage::disk('public')->path($rel);
@@ -790,7 +818,7 @@ class EvidenceController extends Controller
                     if ($nameExt === '' || $nameExt === null) {
                         $fallbackExt = $e->type ?? pathinfo($rel, PATHINFO_EXTENSION) ?? null;
                         if ($fallbackExt) {
-                            $downloadName .= '.' . ltrim((string) $fallbackExt, '.');
+                            $downloadName .= '.'.ltrim((string) $fallbackExt, '.');
                         }
                     }
                     $mime = $this->determineMime($absolutePath, $file['mime_type'] ?? null, $e->type ?? null);
@@ -801,19 +829,20 @@ class EvidenceController extends Controller
 
                     return response()->download($absolutePath, $downloadName);
                 }
+
                 return $this->fileNotFound();
             }
 
             // --- หลายไฟล์ -> ZIP ---
             if (count($files) > 1) {
-                $zipBase = Str::slug($e->name ?: "evidence-{$e->id}", '-') . "-{$e->id}";
+                $zipBase = Str::slug($e->name ?: "evidence-{$e->id}", '-')."-{$e->id}";
                 $tempDir = storage_path('app/temp');
-                if (!is_dir($tempDir)) {
+                if (! is_dir($tempDir)) {
                     @mkdir($tempDir, 0775, true);
                 }
-                $zipFull = $tempDir . DIRECTORY_SEPARATOR . $zipBase . '.zip';
+                $zipFull = $tempDir.DIRECTORY_SEPARATOR.$zipBase.'.zip';
 
-                $zip = new \ZipArchive();
+                $zip = new \ZipArchive;
                 if ($zip->open($zipFull, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
                     return response()->json(['success' => false, 'message' => 'ไม่สามารถสร้างไฟล์ ZIP ได้'], 500);
                 }
@@ -828,14 +857,14 @@ class EvidenceController extends Controller
                         if ($ext === '' || $ext === null) {
                             $fallbackExt = pathinfo($rel, PATHINFO_EXTENSION) ?? ($e->type ?? null);
                             if ($fallbackExt) {
-                                $entry .= '.' . ltrim((string) $fallbackExt, '.');
+                                $entry .= '.'.ltrim((string) $fallbackExt, '.');
                             }
                         }
                         if (isset($used[$entry])) {
                             $i = ++$used[$entry];
                             $nameOnly = pathinfo($entry, PATHINFO_FILENAME);
                             $extPart = pathinfo($entry, PATHINFO_EXTENSION);
-                            $entry = $nameOnly . " (" . $i . ")." . $extPart;
+                            $entry = $nameOnly.' ('.$i.').'.$extPart;
                         } else {
                             $used[$entry] = 0;
                         }
@@ -844,11 +873,11 @@ class EvidenceController extends Controller
                 }
                 $zip->close();
 
-                return response()->download($zipFull, $zipBase . '.zip')->deleteFileAfterSend(true);
+                return response()->download($zipFull, $zipBase.'.zip')->deleteFileAfterSend(true);
             }
 
             // --- มีแต่ URL ---
-            if (!empty($urls)) {
+            if (! empty($urls)) {
                 return redirect()->away($urls[0]);
             }
 
@@ -860,8 +889,8 @@ class EvidenceController extends Controller
         if ($path && Storage::disk('public')->exists($path)) {
             $full = Storage::disk('public')->path($path);
             $name = $e->name ?: basename($path);
-            if (!str_contains($name, '.') && !empty($e->type)) {
-                $name .= '.' . ltrim($e->type, '.');
+            if (! str_contains($name, '.') && ! empty($e->type)) {
+                $name .= '.'.ltrim($e->type, '.');
             }
 
             $mime = $this->determineMime($full, null, $e->type ?? null);
@@ -893,7 +922,9 @@ class EvidenceController extends Controller
      */
     private function normalizePath(?string $path): ?string
     {
-        if (!$path) return null;
+        if (! $path) {
+            return null;
+        }
 
         $path = str_replace('\\', '/', $path);
         $path = ltrim($path, '/');
@@ -914,20 +945,33 @@ class EvidenceController extends Controller
     private function shouldOpenInline(?string $mime, ?string $ext): bool
     {
         $mime = strtolower((string) ($mime ?? ''));
-        $ext  = strtolower((string) ($ext ?? ''));
+        $ext = strtolower((string) ($ext ?? ''));
 
         if ($mime !== '') {
-            if ($mime === 'application/pdf') return true;
-            if (str_starts_with($mime, 'image/')) return true;
-            if ($mime === 'image/svg+xml') return true;
-            if ($mime === 'text/plain') return true;
-            if ($mime === 'text/csv' || $mime === 'application/csv') return true;
-            if ($mime === 'text/html') return true;
+            if ($mime === 'application/pdf') {
+                return true;
+            }
+            if (str_starts_with($mime, 'image/')) {
+                return true;
+            }
+            if ($mime === 'image/svg+xml') {
+                return true;
+            }
+            if ($mime === 'text/plain') {
+                return true;
+            }
+            if ($mime === 'text/csv' || $mime === 'application/csv') {
+                return true;
+            }
+            if ($mime === 'text/html') {
+                return true;
+            }
         }
 
         // Fallback by extension when MIME not available
         return in_array($ext, ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'svg', 'txt', 'csv', 'htm', 'html'], true);
     }
+
     private function convertToPdf(string $inputPath, string $outputDir): ?string
     {
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
@@ -936,13 +980,14 @@ class EvidenceController extends Controller
             ? '"C:\\Program Files\\LibreOffice\\program\\soffice.exe"'
             : 'soffice';
 
-        $command = $soffice . ' --headless --convert-to pdf --outdir '
-            . escapeshellarg($outputDir) . ' ' . escapeshellarg($inputPath);
+        $command = $soffice.' --headless --convert-to pdf --outdir '
+            .escapeshellarg($outputDir).' '.escapeshellarg($inputPath);
 
         exec($command, $output, $returnVar);
 
         if ($returnVar === 0) {
-            $pdfPath = $outputDir . '/' . pathinfo($inputPath, PATHINFO_FILENAME) . '.pdf';
+            $pdfPath = $outputDir.'/'.pathinfo($inputPath, PATHINFO_FILENAME).'.pdf';
+
             return file_exists($pdfPath) ? $pdfPath : null;
         }
 
@@ -967,7 +1012,9 @@ class EvidenceController extends Controller
                 $detected = null;
             }
         }
-        if ($detected) return strtolower($detected);
+        if ($detected) {
+            return strtolower($detected);
+        }
 
         $ext = strtolower((string) ($ext ?? pathinfo($path, PATHINFO_EXTENSION)));
         $map = [
@@ -984,6 +1031,7 @@ class EvidenceController extends Controller
             'htm' => 'text/html',
             'html' => 'text/html',
         ];
+
         return $map[$ext] ?? null;
     }
 
@@ -993,21 +1041,29 @@ class EvidenceController extends Controller
     private function inlineHeaders(string $filename, ?string $mime): array
     {
         $headers = [];
-        if ($mime) $headers['Content-Type'] = $mime;
+        if ($mime) {
+            $headers['Content-Type'] = $mime;
+        }
         $headers['X-Content-Type-Options'] = 'nosniff';
         $ascii = $this->asciiFilename($filename);
         $utf = rawurlencode($filename);
         $headers['Content-Disposition'] = "inline; filename=\"{$ascii}\"; filename*=UTF-8''{$utf}";
+
         return $headers;
     }
 
     private function asciiFilename(string $name): string
     {
         $safe = preg_replace('/[^A-Za-z0-9._-]/', '_', $name);
+
         return $safe !== null && $safe !== '' ? $safe : 'file';
     }
+
     public function getByCriteria($criteriaId): JsonResponse
     {
+        $criteria = Criteria::findOrFail($criteriaId);
+        $this->authorizeCriteriaAccess($criteria);
+
         try {
             $evidences = Evidence::with(['user'])
                 ->where('criteria_id', $criteriaId)
@@ -1016,13 +1072,12 @@ class EvidenceController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $evidences
+                'data' => $evidences,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to get evidence',
-                'error' => $e->getMessage()
             ], 500);
         }
     }
@@ -1034,20 +1089,24 @@ class EvidenceController extends Controller
     {
         try {
             $evidence = Evidence::findOrFail($id);
-            $evidence->update(['status' => !$evidence->status]);
+            abort_if(Auth::user()?->hasRole('user'), 403);
+            $evidence->update(['status' => ! $evidence->status]);
             $evidence->load(['criteria', 'user']);
             $this->refreshCriteriaStatus($evidence->criteria);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Evidence status updated successfully',
-                'data' => $evidence
+                'data' => $evidence,
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update evidence status',
-                'error' => $e->getMessage()
             ], 500);
         }
     }
@@ -1088,5 +1147,33 @@ class EvidenceController extends Controller
         }
 
         $criteria->save();
+    }
+
+    private function authorizeCriteriaAccess(Criteria $criteria): void
+    {
+        $user = Auth::user();
+        if (! $user || ! $user->hasRole('user')) {
+            return;
+        }
+
+        $assigned = $criteria->indicator()
+            ->whereHas('assignments', fn ($query) => $query->where('collector', $user->id))
+            ->exists();
+
+        abort_unless($assigned, 403);
+    }
+
+    private function authorizeEvidenceAccess(Evidence $evidence, bool $write = false): void
+    {
+        $user = Auth::user();
+        if (! $user || ! $user->hasRole('user')) {
+            return;
+        }
+
+        $this->authorizeCriteriaAccess($evidence->criteria()->firstOrFail());
+
+        if ($write) {
+            abort_unless((int) $evidence->user_id === (int) $user->id, 403);
+        }
     }
 }

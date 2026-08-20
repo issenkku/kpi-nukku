@@ -2,25 +2,27 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Criteria;
+use App\Models\Evidence;
+use App\Models\Indicator;
+use App\Models\Variable;
+use App\Notifications\IndicatorStatusChangedForAssignees;
+use App\Support\RichTextSanitizer;
+use Illuminate\Database\Eloquent\Casts\Json;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use App\Models\Indicator;
-use App\Models\Variable;
-use App\Models\Criteria;
-use App\Models\Evidence;
-use Illuminate\Database\Eloquent\Casts\Json;
-use Laravel\Pail\ValueObjects\Origin\Console;
 
 class DashboardKpiAdminController extends Controller
 {
+    public function __construct(private readonly RichTextSanitizer $richText) {}
 
-    public function show(Request $request,$id)
+    public function show(Request $request, $id)
     {
         $indicator = Indicator::with([
             'category.standard',
             'assignments.collectorUser.department',
-            'criterias' => function($query) {
+            'criterias' => function ($query) {
                 $query->orderBy('sequence', 'asc');
             },
             'criterias.evidenceRequirements',
@@ -30,38 +32,47 @@ class DashboardKpiAdminController extends Controller
             'formulas.variables',
             'checklistItems',
         ])->findOrFail($id);
+
         // dd($indicator);
         return view('kpi_dashboard_assigned.vrf_show', compact('indicator'));
     }
 
     public function saveVariables(Request $request, $id)
     {
+        $validated = $request->validate([
+            'variables' => 'nullable|array',
+            'variables.*' => 'nullable|numeric',
+            'criterias' => 'nullable|array',
+            'criterias.*.status' => 'nullable|boolean',
+            'criterias.*.evidence_comment' => 'nullable|string|max:16777215',
+            'status' => 'nullable|integer|in:1,2,3,4',
+        ]);
+
         $indicator = Indicator::findOrFail($id);
         $previousStatus = (int) ($indicator->status ?? 0);
 
         // variables
-        if ($request->has('variables')) {
-            foreach ($request->variables as $varId => $value) {
+        if (array_key_exists('variables', $validated)) {
+            foreach ($validated['variables'] as $varId => $value) {
                 $normalizedValue = $this->normalizeVariableValue($value);
-                Variable::updateOrCreate(
-                    ['id' => $varId, 'indicator_id' => $indicator->id],
-                    ['value' => $normalizedValue]
-                );
+                $variable = $indicator->variables()->whereKey($varId)->firstOrFail();
+                $variable->update(['value' => $normalizedValue]);
             }
         }
 
         // criterias
-        if ($request->has('criterias')) {
-            foreach ($request->criterias as $criteriaId => $criteriaData) {
+        if (array_key_exists('criterias', $validated)) {
+            foreach ($validated['criterias'] as $criteriaId => $criteriaData) {
                 $updateData = [];
                 if (isset($criteriaData['status'])) {
                     $updateData['status'] = $criteriaData['status'];
                 }
                 if (array_key_exists('evidence_comment', $criteriaData)) {
-                    $updateData['evidence_comment'] = $criteriaData['evidence_comment'];
+                    $updateData['evidence_comment'] = $this->richText->sanitize($criteriaData['evidence_comment']);
                 }
                 if ($updateData) {
-                    Criteria::where('id', $criteriaId)->update($updateData);
+                    $criteria = $indicator->criterias()->whereKey($criteriaId)->firstOrFail();
+                    $criteria->update($updateData);
                 }
             }
         }
@@ -77,15 +88,15 @@ class DashboardKpiAdminController extends Controller
         //     }
         // }
 
-        if ($request->has('status')) {
-            $indicator->status = $request->status;
+        if (array_key_exists('status', $validated)) {
+            $indicator->status = $validated['status'];
         } else {
             $indicator->status = 1; // Default value
         }
 
         $indicator->save();
 
-        if ($indicator->status == 2 || $request->status == 2) {
+        if ($indicator->status == 2) {
             $this->calculateScore($indicator);
         }
 
@@ -94,14 +105,14 @@ class DashboardKpiAdminController extends Controller
             $newStatus = (int) ($indicator->status ?? 0);
             if ($newStatus !== $previousStatus) {
                 $indicator->loadMissing(['assignments.collectorUser']);
-                $changedBy = optional(\Illuminate\Support\Facades\Auth::user())->name;
+                $changedBy = optional(Auth::user())->name;
                 // 1) Any -> draft (1): notify assignees they can edit again
                 if ($newStatus === 1 && $previousStatus !== 1) {
                     foreach ($indicator->assignments as $assignment) {
                         if ($assignment->collectorUser) {
                             $recipient = $assignment->collectorUser;
                             $email = (string) ($recipient->email ?? '');
-                            \Illuminate\Support\Facades\Log::info('Notify assignee about status change (*->1)', [
+                            Log::info('Notify assignee about status change (*->1)', [
                                 'indicator_id' => $indicator->id,
                                 'recipient_id' => $recipient->id ?? null,
                                 'email' => $email,
@@ -109,12 +120,13 @@ class DashboardKpiAdminController extends Controller
                                 'new' => $newStatus,
                             ]);
                             if ($email === '') {
-                                \Illuminate\Support\Facades\Log::warning('Skip notify: recipient has no email', [
+                                Log::warning('Skip notify: recipient has no email', [
                                     'recipient_id' => $recipient->id ?? null,
                                 ]);
+
                                 continue;
                             }
-                            $assignment->collectorUser->notify(new \App\Notifications\IndicatorStatusChangedForAssignees($indicator, $newStatus, $previousStatus, $changedBy));
+                            $assignment->collectorUser->notify(new IndicatorStatusChangedForAssignees($indicator, $newStatus, $previousStatus, $changedBy));
                         }
                     }
                 }
@@ -124,7 +136,7 @@ class DashboardKpiAdminController extends Controller
                         if ($assignment->collectorUser) {
                             $recipient = $assignment->collectorUser;
                             $email = (string) ($recipient->email ?? '');
-                            \Illuminate\Support\Facades\Log::info('Notify assignee about status change (QA->assignee)', [
+                            Log::info('Notify assignee about status change (QA->assignee)', [
                                 'indicator_id' => $indicator->id,
                                 'recipient_id' => $recipient->id ?? null,
                                 'email' => $email,
@@ -132,18 +144,19 @@ class DashboardKpiAdminController extends Controller
                                 'new' => $newStatus,
                             ]);
                             if ($email === '') {
-                                \Illuminate\Support\Facades\Log::warning('Skip notify: recipient has no email', [
+                                Log::warning('Skip notify: recipient has no email', [
                                     'recipient_id' => $recipient->id ?? null,
                                 ]);
+
                                 continue;
                             }
-                            $assignment->collectorUser->notify(new \App\Notifications\IndicatorStatusChangedForAssignees($indicator, $newStatus, $previousStatus, $changedBy));
+                            $assignment->collectorUser->notify(new IndicatorStatusChangedForAssignees($indicator, $newStatus, $previousStatus, $changedBy));
                         }
                     }
                 }
             }
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('Notify assignees failed', [
+            Log::error('Notify assignees failed', [
                 'indicator_id' => $indicator->id ?? null,
                 'error' => $e->getMessage(),
             ]);
@@ -204,12 +217,12 @@ class DashboardKpiAdminController extends Controller
         // Create array of passed criteria sequences (sorted and normalized to int for comparison)
         $passedCriteriaSequences = $passedCriteria
             ->pluck('sequence')
-            ->map(fn($v) => (int) $v)
+            ->map(fn ($v) => (int) $v)
             ->sort()
             ->values()
             ->toArray();
 
-        Log::info("Passed criteria sequences for indicator {$indicator->id}: " . json_encode($passedCriteriaSequences));
+        Log::info("Passed criteria sequences for indicator {$indicator->id}: ".json_encode($passedCriteriaSequences));
 
         // Check each checklist item for exact match
         foreach ($indicator->checklistItems as $checklistItem) {
@@ -217,13 +230,13 @@ class DashboardKpiAdminController extends Controller
 
             // Normalize and sort required items for comparison
             $sortedRequiredItems = collect($requiredItems)
-                ->map(fn($v) => (int) $v)
+                ->map(fn ($v) => (int) $v)
                 ->sort()
                 ->values()
                 ->toArray();
 
-            Log::info("Checking checklist item {$checklistItem->id}, required sequences: " . json_encode($sortedRequiredItems));
-            Log::info("Comparing with passed sequences: " . json_encode($passedCriteriaSequences));
+            Log::info("Checking checklist item {$checklistItem->id}, required sequences: ".json_encode($sortedRequiredItems));
+            Log::info('Comparing with passed sequences: '.json_encode($passedCriteriaSequences));
 
             // Check if the passed criteria sequences exactly match the required items
             if ($passedCriteriaSequences === $sortedRequiredItems) {
@@ -272,14 +285,14 @@ class DashboardKpiAdminController extends Controller
             $condition = $raw;
             foreach ($tokens as $name) {
                 if (array_key_exists($name, $varMap)) {
-                    $condition = preg_replace('/\b' . preg_quote($name, '/') . '\b/', (string) $varMap[$name], $condition);
+                    $condition = preg_replace('/\b'.preg_quote($name, '/').'\b/', (string) $varMap[$name], $condition);
                 }
             }
 
             try {
                 Log::info("Evaluating formula for indicator {$indicator->id}: {$condition}");
                 $outcome = (float) $this->evaluateFormula($condition);
-                if (!is_finite($outcome)) {
+                if (! is_finite($outcome)) {
                     throw new \RuntimeException('Non-finite outcome (NaN/INF)');
                 }
                 $lastOutcome = $outcome;
@@ -293,7 +306,7 @@ class DashboardKpiAdminController extends Controller
                     Log::info("Updated output variable {$outputVariable->variable_name} with value: {$outcome}");
                 }
             } catch (\Throwable $e) {
-                Log::error("Formula calculation error for indicator {$indicator->id}, formula: '{$raw}', compiled: '{$condition}', error: " . $e->getMessage());
+                Log::error("Formula calculation error for indicator {$indicator->id}, formula: '{$raw}', compiled: '{$condition}', error: ".$e->getMessage());
                 // Continue with next formula
             }
         }
@@ -304,11 +317,13 @@ class DashboardKpiAdminController extends Controller
         $sumOutputs = (float) $indicator->variables()->where('type', 'output')->sum('value');
         if ($sumOutputs > 0 || $anyOutputUpdated) {
             Log::info("Total calculated score from output variables for indicator {$indicator->id}: {$sumOutputs}");
+
             return $sumOutputs;
         }
 
         // Fallback: no output variables exist; use last outcome (or 0 if none)
         Log::info("No output variables found; using last outcome for indicator {$indicator->id}: {$lastOutcome}");
+
         return $lastOutcome;
     }
 
@@ -325,7 +340,7 @@ class DashboardKpiAdminController extends Controller
 
         // Enhanced security check - allow numbers, operators, parentheses, decimal points, and comparison operators
         // Also allow question mark and colon for ternary operator
-        if (!preg_match('/^[0-9+\-*\/\.\(\)\s<>=!&|?:]+$/', $expression)) {
+        if (! preg_match('/^[0-9+\-*\/\.\(\)\s<>=!&|?:]+$/', $expression)) {
             throw new \Exception("Invalid formula expression: contains unauthorized characters. Expression: {$expression}");
         }
 
@@ -335,14 +350,14 @@ class DashboardKpiAdminController extends Controller
             $result = eval("return $expression;");
 
             if ($result === false || is_null($result)) {
-                throw new \Exception("Formula evaluation failed");
+                throw new \Exception('Formula evaluation failed');
             }
 
             return (float) $result;
         } catch (\ParseError $e) {
-            throw new \Exception("Formula syntax error: " . $e->getMessage());
+            throw new \Exception('Formula syntax error: '.$e->getMessage());
         } catch (\Exception $e) {
-            throw new \Exception("Formula execution error: " . $e->getMessage());
+            throw new \Exception('Formula execution error: '.$e->getMessage());
         }
     }
 
@@ -398,10 +413,10 @@ class DashboardKpiAdminController extends Controller
             $falseValue = trim($this->handleIfFunction($parts[2]));
 
             // Build PHP ternary expression
-            $ternary = "(" . $condition . " ? " . $trueValue . " : " . $falseValue . ")";
+            $ternary = '('.$condition.' ? '.$trueValue.' : '.$falseValue.')';
 
             // Replace the whole IF(...) segment with the ternary
-            $result = substr($result, 0, $ifStart) . $ternary . substr($result, $closeParen + 1);
+            $result = substr($result, 0, $ifStart).$ternary.substr($result, $closeParen + 1);
         }
 
         return $result;

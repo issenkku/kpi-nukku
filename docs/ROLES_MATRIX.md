@@ -9,6 +9,7 @@ This matrix summarizes key permissions per role as configured in `database/seede
 - Full refresh with all demo data (destructive):
   - `php artisan migrate:fresh --seed`
   - This runs `DatabaseSeeder`, which in turn calls roles, permissions, users, and sample content seeders.
+  - This is disabled in production and must only be used in development/test environments.
 
 Notes
 - After seeding, Spatie permission cache is cleared automatically by the seeder.
@@ -58,7 +59,7 @@ Notes
 | Dashboard                      | view-dashboard                     | Y           | Y            | Y        | Y                    | N    |
 | Export Dashboard               | export-dashboard                   | Y           | Y            | Y        | Y                    | N    |
 | Indicator Dashboard            | view-indicator-dashboard           | Y           | Y            | Y        | Y                    | N    |
-| จัดการ Indicator              | create/edit/delete-indicator       | Y           | Y            | Y        | N                    | N    |
+| จัดการ Indicator              | create/edit/delete-indicator       | Y           | Y            | Y        | Y                    | N    |
 | จัดการผู้ใช้งาน               | view/create/edit/delete-users      | Y           | Y            | View     | View                 | N    |
 | หน่วยงาน (Departments)        | view/create/edit/delete-departments| Y           | Y            | View     | View                 | N    |
 | หมวดหมู่ (Categories)         | view/create/edit/delete-categories | Y           | Y            | View     | View                 | N    |
@@ -71,5 +72,6 @@ Notes
 
 หมายเหตุ
 - “View” หมายถึงดูได้อย่างเดียว (ตาม seeder) ไม่สามารถสร้าง/แก้ไข/ลบ
-- เส้นทางถูกป้องกันด้วย `permission:*` และ `auth:sanctum` (ดูที่ `routes/web.php`)
+- เส้นทางเว็บถูกป้องกันด้วย `auth` และ `permission:*` (ดูที่ `routes/web.php`)
+- ผู้ใช้ role `user` จัดการหรือดาวน์โหลดหลักฐานได้เฉพาะตัวบ่งชี้ที่ได้รับ assignment และแก้/ลบได้เฉพาะหลักฐานของตนเอง
 - ยืนยันด้วยเทสต์ `tests/Feature/RolesMatrixByRoleTest.php` และ `tests/Feature/NavbarVisibilityByRoleTest.php`

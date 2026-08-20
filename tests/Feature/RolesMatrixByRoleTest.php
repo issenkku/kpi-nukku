@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Models\Assignment;
 use App\Models\Category;
+use App\Models\Criteria;
 use App\Models\Evidence;
 use App\Models\Indicator;
 use App\Models\Standard;
@@ -38,7 +40,7 @@ class RolesMatrixByRoleTest extends TestCase
             'year' => '2025',
         ]);
         // Minimal criteria to satisfy evidence FK
-        $criteria = \App\Models\Criteria::create([
+        $criteria = Criteria::create([
             'name' => 'C1',
             'sequence' => 1,
             'indicator_id' => $indicator->id,
@@ -85,6 +87,7 @@ class RolesMatrixByRoleTest extends TestCase
         $this->actingAs($u, 'sanctum')->get('/standards')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/settings')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/evidences')->assertStatus(200);
+        $this->actingAs($u, 'sanctum')->get('/dashboardkpi')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get("/evidences/{$evidence->id}/download")->assertStatus(200);
     }
 
@@ -105,6 +108,7 @@ class RolesMatrixByRoleTest extends TestCase
         $this->actingAs($u, 'sanctum')->get('/standards')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/settings')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/evidences')->assertStatus(200);
+        $this->actingAs($u, 'sanctum')->get('/dashboardkpi')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get("/evidences/{$evidence->id}/download")->assertStatus(200);
     }
 
@@ -137,10 +141,8 @@ class RolesMatrixByRoleTest extends TestCase
 
         $this->actingAs($u, 'sanctum')->get('/dashboard/export')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/indicator')->assertStatus(200);
-        // no create-indicator permission
-        $this->actingAs($u, 'sanctum')->get('/indicator/create')->assertStatus(403);
-        // no view-indicator permission
-        $this->actingAs($u, 'sanctum')->get("/indicator/{$indicator->id}/show")->assertStatus(403);
+        $this->actingAs($u, 'sanctum')->get('/indicator/create')->assertStatus(200);
+        $this->actingAs($u, 'sanctum')->get("/indicator/{$indicator->id}/show")->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/users')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/departments')->assertStatus(200);
         $this->actingAs($u, 'sanctum')->get('/categories')->assertStatus(200);
@@ -156,6 +158,10 @@ class RolesMatrixByRoleTest extends TestCase
         [$indicator, $evidence] = $this->seedIndicatorAndEvidence();
         $u = User::factory()->create();
         $u->assignRole('user');
+        Assignment::create([
+            'indicator_id' => $indicator->id,
+            'collector' => $u->id,
+        ]);
 
         $this->actingAs($u, 'sanctum')->get('/dashboard')->assertStatus(403);
         $this->actingAs($u, 'sanctum')->get('/dashboard/export')->assertStatus(403);

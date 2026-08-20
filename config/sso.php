@@ -10,5 +10,8 @@ return [
 
     // Callback/redirect URL configured at the SSO provider
     'redirect_url' => env('SSO_REDIRECT_URL', ''),
-];
 
+    // Provider endpoints differ between UAT and production. Keep them out of code.
+    'web_base_url' => env('SSO_WEB_BASE_URL', ''),
+    'api_base_url' => env('SSO_API_BASE_URL', ''),
+];

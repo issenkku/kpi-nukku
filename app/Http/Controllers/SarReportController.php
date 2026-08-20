@@ -2,26 +2,31 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\SarReport;
-use App\Models\Standard;
-use App\Models\Indicator;
 use App\Models\Criteria;
 use App\Models\Evidence;
+use App\Models\Indicator;
+use App\Models\SarReport;
+use App\Models\Standard;
+use App\Support\RichTextSanitizer;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Barryvdh\DomPDF\Facade\Pdf;
-use PhpOffice\PhpWord\Shared\Html;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
-use PhpOffice\PhpWord\PhpWord;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpWord\IOFactory;
-
+use PhpOffice\PhpWord\PhpWord;
+use PhpOffice\PhpWord\Shared\Html;
 use PhpOffice\PhpWord\Style\ListItem;
 
 class SarReportController extends Controller
 {
     protected array $tempImageFiles = [];
+
+    public function __construct(private readonly RichTextSanitizer $richText) {}
+
     public function index()
     {
         $reports = SarReport::with(['standard', 'indicator', 'criteria'])->paginate(10);
@@ -68,15 +73,14 @@ class SarReportController extends Controller
             },
             'criterias.evidences',
         ])
-            ->when($year, fn($q) => $q->where('year', $year)) // ✅ กรองปีตรงนี้
+            ->when($year, fn ($q) => $q->where('year', $year)) // ✅ กรองปีตรงนี้
             ->orderByRaw("CASE LEFT(code, 3) WHEN 'NCS' THEN 1 WHEN 'NCO' THEN 2 WHEN 'NCP' THEN 3 ELSE 4 END")
             ->orderByRaw("CASE WHEN split_part(code, '-', 2) ~ '^[0-9]+' THEN CAST(split_part(code, '-', 2) AS INTEGER) ELSE 999999 END")
             ->get()
-            ->groupBy(fn($ind) => optional(optional($ind->category)->standard)->name ?? 'ไม่ระบุมาตรฐาน');
+            ->groupBy(fn ($ind) => optional(optional($ind->category)->standard)->name ?? 'ไม่ระบุมาตรฐาน');
 
         return view('sar_reports.create', compact('standards', 'year'));
     }
-
 
     public function store(Request $request)
     {
@@ -91,32 +95,37 @@ class SarReportController extends Controller
             'criteria_id' => 'nullable|exists:criterias,id',
             'title' => 'nullable|string|max:255',
         ]);
+        foreach (['section1', 'section2', 'section4'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $data[$field] = $this->richText->sanitize($data[$field]);
+            }
+        }
 
         // If required relational fields are missing, derive sensible defaults
         $indicatorId = $data['indicator_id'] ?? null;
-        $criteriaId  = $data['criteria_id'] ?? null;
-        $standardId  = $data['standard_id'] ?? null;
+        $criteriaId = $data['criteria_id'] ?? null;
+        $standardId = $data['standard_id'] ?? null;
 
-        if (!$indicatorId || !$criteriaId || !$standardId) {
+        if (! $indicatorId || ! $criteriaId || ! $standardId) {
             $indicator = Indicator::with(['category.standard', 'criterias' => function ($q) {
                 $q->orderBy('sequence');
             }])
                 ->orderBy('code')
                 ->first();
 
-            if (!$indicator || $indicator->criterias->isEmpty() || !$indicator->category || !$indicator->category->standard) {
+            if (! $indicator || $indicator->criterias->isEmpty() || ! $indicator->category || ! $indicator->category->standard) {
                 return back()->withInput()->withErrors([
                     'general' => 'ไม่พบตัวชี้วัด/เกณฑ์/มาตรฐานสำหรับบันทึกข้อมูล',
                 ]);
             }
 
             $indicatorId = $indicatorId ?: $indicator->id;
-            $criteriaId  = $criteriaId  ?: $indicator->criterias->first()->id;
-            $standardId  = $standardId  ?: $indicator->category->standard->id;
+            $criteriaId = $criteriaId ?: $indicator->criterias->first()->id;
+            $standardId = $standardId ?: $indicator->category->standard->id;
         }
 
         $year = $data['year'] ?? null;
-        if (!$year) {
+        if (! $year) {
             // Use indicator year if available, otherwise current year
             $year = optional(Indicator::find($indicatorId))->year ?? (int) now()->format('Y');
         }
@@ -138,6 +147,7 @@ class SarReportController extends Controller
 
         return redirect()->route('sar_reports.index')->with('success', 'บันทึก SAR เรียบร้อยแล้ว');
     }
+
     public function edit($id)
     {
         $report = SarReport::findOrFail($id);
@@ -174,6 +184,11 @@ class SarReportController extends Controller
             'criteria_id' => 'nullable|exists:criterias,id',
             'title' => 'nullable|string|max:255',
         ]);
+        foreach (['section1', 'section2', 'section4'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $data[$field] = $this->richText->sanitize($data[$field]);
+            }
+        }
 
         $payload = [
             'section1' => $data['section1'] ?? $report->section1,
@@ -195,6 +210,7 @@ class SarReportController extends Controller
 
         return redirect()->route('sar_reports.index')->with('success', 'อัปเดตรายงาน SAR สำเร็จ');
     }
+
     public function updateReport($id, Request $request)
     {
         $request->validate([
@@ -202,7 +218,7 @@ class SarReportController extends Controller
         ]);
 
         $criteria = Criteria::findOrFail($id);
-        $reportHtml = $request->input('report');
+        $reportHtml = $this->richText->sanitize($request->input('report'));
 
         // Persist to criterias.report (no evidence auto-create)
         $criteria->report = $reportHtml;
@@ -226,12 +242,9 @@ class SarReportController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'บันทึกสำเร็จ',
-            'report'  => $reportHtml,
+            'report' => $reportHtml,
         ]);
     }
-
-
-
 
     /**
      * Safely add HTML to a PhpWord container, with fallback to plain text.
@@ -260,8 +273,6 @@ class SarReportController extends Controller
         try {
             $report = SarReport::findOrFail($id);
 
-
-
             $report->delete();
 
             return redirect()
@@ -280,6 +291,7 @@ class SarReportController extends Controller
 
         if ($content === '') {
             $element->addText('-');
+
             return;
         }
 
@@ -296,6 +308,7 @@ class SarReportController extends Controller
                 if ($line === '') {
                     $element->addTextBreak();
                     $added = true;
+
                     continue;
                 }
                 $element->addText($line);
@@ -309,15 +322,16 @@ class SarReportController extends Controller
 
         // ✅ parse DOM
         $doc = new \DOMDocument('1.0', 'UTF-8');
-        $htmlBody = '<body>' . mb_convert_encoding($content, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        $htmlBody = '<body>'.mb_convert_encoding($content, 'HTML-ENTITIES', 'UTF-8').'</body>';
         @$doc->loadHTML(
             $htmlBody,
             LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
         );
 
         $body = $doc->getElementsByTagName('body')->item(0);
-        if (!$body) {
+        if (! $body) {
             $element->addText($this->sanitizeWordText(strip_tags($content)) ?: '-');
+
             return;
         }
 
@@ -326,23 +340,25 @@ class SarReportController extends Controller
         }
     }
 
-
     protected function appendNodeSafe($element, $node, int $listLevel = 0): void
     {
-        if (!$node) return;
+        if (! $node) {
+            return;
+        }
 
         if ($node->nodeType === XML_TEXT_NODE) {
-            $text = preg_replace("/[\r\n]+/", " ", $node->textContent);
+            $text = preg_replace("/[\r\n]+/", ' ', $node->textContent);
             $text = $this->sanitizeWordText($text);
             if ($text !== '') {
                 $element->addText($text);
             }
+
             return;
         }
 
         if ($node->nodeType === XML_ELEMENT_NODE) {
             $tag = strtolower($node->nodeName);
-            $text = preg_replace("/[\r\n]+/", " ", $node->textContent ?? '');
+            $text = preg_replace("/[\r\n]+/", ' ', $node->textContent ?? '');
             $text = $this->sanitizeWordText($text);
 
             switch ($tag) {
@@ -416,7 +432,7 @@ class SarReportController extends Controller
                 case 'li':
                     if ($text !== '') {
                         // Use bullet list to avoid numbering schema corruption in Word
-                        $safeLevel = max(0, (int)$listLevel);
+                        $safeLevel = max(0, (int) $listLevel);
                         $element->addListItem($text, $safeLevel, null, ListItem::TYPE_BULLET_FILLED);
                     }
                     break;
@@ -458,11 +474,14 @@ class SarReportController extends Controller
         if (preg_match('/^data:image\\/(\\w+);base64,(.+)$/', $src, $m)) {
             $ext = strtolower($m[1]);
             $data = base64_decode($m[2]);
-            if ($data === false) return;
+            if ($data === false) {
+                return;
+            }
             $path = $this->storeTempImage($data, $ext);
             if ($path) {
                 $element->addImage($path, ['width' => 380]);
             }
+
             return;
         }
         if (filter_var($src, FILTER_VALIDATE_URL) || file_exists($src)) {
@@ -473,23 +492,28 @@ class SarReportController extends Controller
     protected function extractImageSources(string $html): array
     {
         $srcs = [];
-        if ($html === '') return $srcs;
+        if ($html === '') {
+            return $srcs;
+        }
         if (preg_match_all('/<img[^>]+src=["\']([^"\']+)["\']/i', $html, $m)) {
             $srcs = $m[1] ?? [];
         }
+
         return array_values(array_unique(array_filter($srcs)));
     }
 
     protected function extractTableTextFromHtml(string $html): string
     {
         $html = (string) ($html ?? '');
-        if (trim($html) === '') return '';
+        if (trim($html) === '') {
+            return '';
+        }
 
         $doc = new \DOMDocument('1.0', 'UTF-8');
-        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        $htmlBody = '<body>'.mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8').'</body>';
         @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         $body = $doc->getElementsByTagName('body')->item(0);
-        if (!$body) {
+        if (! $body) {
             return trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
         }
 
@@ -498,7 +522,10 @@ class SarReportController extends Controller
         foreach ($body->childNodes as $node) {
             if ($node->nodeType !== XML_ELEMENT_NODE) {
                 $text = trim($node->textContent ?? '');
-                if ($text !== '') $parts[] = $text;
+                if ($text !== '') {
+                    $parts[] = $text;
+                }
+
                 continue;
             }
             $tag = strtolower($node->nodeName);
@@ -507,9 +534,13 @@ class SarReportController extends Controller
                 foreach ($node->getElementsByTagName('tr') as $tr) {
                     $cells = [];
                     foreach ($tr->childNodes as $cell) {
-                        if ($cell->nodeType !== XML_ELEMENT_NODE) continue;
+                        if ($cell->nodeType !== XML_ELEMENT_NODE) {
+                            continue;
+                        }
                         $cellTag = strtolower($cell->nodeName);
-                        if ($cellTag !== 'td' && $cellTag !== 'th') continue;
+                        if ($cellTag !== 'td' && $cellTag !== 'th') {
+                            continue;
+                        }
                         $cellText = trim(strip_tags($cell->textContent ?? ''));
                         $cells[] = $cellText;
                     }
@@ -522,7 +553,9 @@ class SarReportController extends Controller
                 }
             } else {
                 $text = trim($node->textContent ?? '');
-                if ($text !== '') $parts[] = $text;
+                if ($text !== '') {
+                    $parts[] = $text;
+                }
             }
         }
 
@@ -542,27 +575,36 @@ class SarReportController extends Controller
         $raw = strip_tags($raw);
         $raw = preg_replace("/\t+/", "\t", $raw);
         $raw = preg_replace("/\n+/", "\n", $raw);
+
         return trim($raw);
     }
 
     protected function extractTableRowsFromHtml(string $html): array
     {
         $html = (string) ($html ?? '');
-        if (trim($html) === '') return [];
+        if (trim($html) === '') {
+            return [];
+        }
         $doc = new \DOMDocument('1.0', 'UTF-8');
-        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        $htmlBody = '<body>'.mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8').'</body>';
         @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         $body = $doc->getElementsByTagName('body')->item(0);
-        if (!$body) return [];
+        if (! $body) {
+            return [];
+        }
 
         $rows = [];
         foreach ($body->getElementsByTagName('table') as $table) {
             foreach ($table->getElementsByTagName('tr') as $tr) {
                 $cells = [];
                 foreach ($tr->childNodes as $cell) {
-                    if ($cell->nodeType !== XML_ELEMENT_NODE) continue;
+                    if ($cell->nodeType !== XML_ELEMENT_NODE) {
+                        continue;
+                    }
                     $cellTag = strtolower($cell->nodeName);
-                    if ($cellTag !== 'td' && $cellTag !== 'th') continue;
+                    if ($cellTag !== 'td' && $cellTag !== 'th') {
+                        continue;
+                    }
                     $cellText = trim(strip_tags($cell->textContent ?? ''));
                     $cells[] = $cellText;
                 }
@@ -571,6 +613,7 @@ class SarReportController extends Controller
                 }
             }
         }
+
         return $rows;
     }
 
@@ -582,11 +625,12 @@ class SarReportController extends Controller
         }
 
         $doc = new \DOMDocument('1.0', 'UTF-8');
-        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        $htmlBody = '<body>'.mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8').'</body>';
         @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         $body = $doc->getElementsByTagName('body')->item(0);
-        if (!$body) {
+        if (! $body) {
             $text = trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
+
             return $text !== '' ? [['type' => 'text', 'text' => $text]] : [];
         }
 
@@ -601,11 +645,12 @@ class SarReportController extends Controller
         };
 
         $walk = function ($node) use (&$walk, &$blocks, &$currentText, $flushText) {
-            if (!$node) {
+            if (! $node) {
                 return;
             }
             if ($node->nodeType === XML_TEXT_NODE) {
-                $currentText .= ' ' . $node->textContent;
+                $currentText .= ' '.$node->textContent;
+
                 return;
             }
             if ($node->nodeType !== XML_ELEMENT_NODE) {
@@ -619,6 +664,7 @@ class SarReportController extends Controller
                 if ($src !== '') {
                     $blocks[] = ['type' => 'image', 'src' => $src];
                 }
+
                 return;
             }
             if ($tag === 'table') {
@@ -636,13 +682,14 @@ class SarReportController extends Controller
                         }
                         $cells[] = trim(strip_tags($cell->textContent ?? ''));
                     }
-                    if (!empty($cells)) {
+                    if (! empty($cells)) {
                         $rows[] = $cells;
                     }
                 }
-                if (!empty($rows)) {
+                if (! empty($rows)) {
                     $blocks[] = ['type' => 'table', 'rows' => $rows];
                 }
+
                 return;
             }
 
@@ -666,52 +713,64 @@ class SarReportController extends Controller
     protected function extractPlainTextWithoutTables(string $html): string
     {
         $html = (string) ($html ?? '');
-        if (trim($html) === '') return '';
+        if (trim($html) === '') {
+            return '';
+        }
         $doc = new \DOMDocument('1.0', 'UTF-8');
-        $htmlBody = '<body>' . mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8') . '</body>';
+        $htmlBody = '<body>'.mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8').'</body>';
         @$doc->loadHTML($htmlBody, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         $body = $doc->getElementsByTagName('body')->item(0);
-        if (!$body) {
+        if (! $body) {
             return trim(strip_tags(html_entity_decode($html, ENT_QUOTES, 'UTF-8')));
         }
         $parts = [];
         foreach ($body->childNodes as $node) {
             if ($node->nodeType !== XML_ELEMENT_NODE) {
                 $text = trim($node->textContent ?? '');
-                if ($text !== '') $parts[] = $text;
+                if ($text !== '') {
+                    $parts[] = $text;
+                }
+
                 continue;
             }
             if (strtolower($node->nodeName) === 'table') {
                 continue;
             }
             $text = trim($node->textContent ?? '');
-            if ($text !== '') $parts[] = $text;
+            if ($text !== '') {
+                $parts[] = $text;
+            }
         }
+
         return trim(implode("\n", $parts));
     }
 
     protected function formatAsciiTable(array $rows): string
     {
-        if (empty($rows)) return '';
+        if (empty($rows)) {
+            return '';
+        }
         $lines = [];
         foreach ($rows as $r) {
             $cells = array_map(function ($c) {
                 $c = trim(preg_replace('/\s+/', ' ', (string) $c));
+
                 return $c;
             }, $r);
             $lines[] = implode("\t", $cells);
         }
+
         return implode("\n", $lines);
     }
 
     protected function storeTempImage(string $data, string $ext): ?string
     {
         $dir = storage_path('app/tmp');
-        if (!is_dir($dir)) {
+        if (! is_dir($dir)) {
             @mkdir($dir, 0755, true);
         }
         $ext = preg_replace('/[^a-z0-9]/i', '', $ext) ?: 'png';
-        $path = $dir . DIRECTORY_SEPARATOR . 'sar_img_' . uniqid('', true) . '.' . $ext;
+        $path = $dir.DIRECTORY_SEPARATOR.'sar_img_'.uniqid('', true).'.'.$ext;
         if (@file_put_contents($path, $data) === false) {
             return null;
         }
@@ -719,6 +778,7 @@ class SarReportController extends Controller
         register_shutdown_function(function () use ($path) {
             @unlink($path);
         });
+
         return $path;
     }
 
@@ -756,7 +816,9 @@ class SarReportController extends Controller
     protected function sanitizeWordText(?string $text): string
     {
         $text = $text ?? '';
-        if ($text === '') return '';
+        if ($text === '') {
+            return '';
+        }
 
         // Normalize newlines
         $text = str_replace(["\r\n", "\r"], "\n", $text);
@@ -795,7 +857,7 @@ class SarReportController extends Controller
         // Disable output compression and clear buffers to avoid corrupting binary streams.
         if (function_exists('ini_get') && function_exists('ini_set')) {
             $zlib = ini_get('zlib.output_compression');
-            if (!empty($zlib) && $zlib !== '0') {
+            if (! empty($zlib) && $zlib !== '0') {
                 @ini_set('zlib.output_compression', '0');
             }
         }
@@ -803,7 +865,6 @@ class SarReportController extends Controller
             @ob_end_clean();
         }
     }
-
 
     public function export(SarReport $report, $type)
     {
@@ -817,7 +878,9 @@ class SarReportController extends Controller
 
         // Sanitize inline styles that force non-Thai fonts from WYSIWYG/Word paste
         $stripFonts = function (?string $html) {
-            if (!$html) return $html;
+            if (! $html) {
+                return $html;
+            }
             // Remove <font> tags
             $html = preg_replace('/<\/?font[^>]*>/i', '', $html ?? '');
             // Remove deprecated attributes
@@ -829,11 +892,12 @@ class SarReportController extends Controller
                 $style = $m[2];
                 $style = preg_replace('/\s*(font-family|font|letter-spacing|word-spacing|mso-[^:]+)\s*:[^;]*;?/i', '', $style);
                 $style = trim(trim($style), ';');
-                return $style !== '' ? 'style="' . $style . '"' : '';
+
+                return $style !== '' ? 'style="'.$style.'"' : '';
             }, $html);
+
             return $html;
         };
-
 
         // helper to get first non-empty evidence.detail HTML for a criteria
         $getEvidenceDetailHtml = function ($cri) {
@@ -846,7 +910,9 @@ class SarReportController extends Controller
                         }
                     }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+            }
+
             return '';
         };
         // helper to prefer criterias.report, fallback to evidence.detail
@@ -855,6 +921,7 @@ class SarReportController extends Controller
             if (trim(strip_tags(html_entity_decode($reportHtml))) === '') {
                 $reportHtml = $getEvidenceDetailHtml($cri);
             }
+
             return $reportHtml;
         };
 
@@ -869,12 +936,11 @@ class SarReportController extends Controller
             }
         }
 
-
         if ($type === 'pdf') {
             // โหลด indicators ทั้งหมด
             $allIndicators = Indicator::with([
                 'category.standard',
-                'criterias' => fn($q) => $q->orderBy('sequence'),
+                'criterias' => fn ($q) => $q->orderBy('sequence'),
                 'criterias.evidenceRequirements',
                 'criterias.evidences.requirement',
             ])
@@ -897,14 +963,14 @@ class SarReportController extends Controller
             $pdf = Pdf::loadView('sar_reports.export_pdf', ['report' => $reportToRender])
                 ->setPaper('a4', 'portrait')
                 ->setOptions([
-                    'isHtml5ParserEnabled'   => true,
-                    'isRemoteEnabled'        => true,
+                    'isHtml5ParserEnabled' => true,
+                    'isRemoteEnabled' => false,
                     // Ensure Dompdf picks a Unicode Thai font
-                    'default_font'           => 'SarabunLocal',
+                    'default_font' => 'SarabunLocal',
                     'enable_font_subsetting' => true,
-                    'font_dir'               => storage_path('fonts'),
-                    'font_cache'             => storage_path('fonts'),
-                    'chroot'                 => base_path(),
+                    'font_dir' => storage_path('fonts'),
+                    'font_cache' => storage_path('fonts'),
+                    'chroot' => base_path(),
                 ]);
 
             // ✅ เปลี่ยนจาก download() เป็น stream()
@@ -912,22 +978,22 @@ class SarReportController extends Controller
         }
 
         if ($type === 'excel') {
-            $spreadsheet = new Spreadsheet();
+            $spreadsheet = new Spreadsheet;
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle('Indicators');
 
             $row = 1;
             $sheet->mergeCells("A{$row}:I{$row}")
-                ->setCellValue("A{$row}", "SAR Report " . (string)$report->year);
+                ->setCellValue("A{$row}", 'SAR Report '.(string) $report->year);
             $sheet->getStyle("A{$row}")->getFont()->setBold(true)->setSize(14);
             $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal('center');
             $row += 2;
 
             $indicators = Indicator::with([
                 'category.standard',
-                'criterias' => fn($q) => $q->orderBy('sequence'),
+                'criterias' => fn ($q) => $q->orderBy('sequence'),
                 'criterias.evidenceRequirements',
-                'criterias.evidences.requirement'
+                'criterias.evidences.requirement',
             ])
                 ->where('year', $report->year)
                 ->join('categories', 'categories.id', '=', 'indicators.categorie_id')
@@ -937,7 +1003,7 @@ class SarReportController extends Controller
                 ->orderBy('indicators.id')
                 ->select('indicators.*')
                 ->get()
-                ->groupBy(fn($ind) => optional(optional($ind->category)->standard)->name ?? 'ไม่ระบุมาตรฐาน');
+                ->groupBy(fn ($ind) => optional(optional($ind->category)->standard)->name ?? 'ไม่ระบุมาตรฐาน');
 
             foreach ($indicators as $stdName => $indsByStd) {
                 // ===== หัวมาตรฐาน =====
@@ -946,7 +1012,7 @@ class SarReportController extends Controller
                 $sheet->getStyle("A{$row}")->getFont()->setBold(true);
                 $row++;
 
-                foreach ($indsByStd->groupBy(fn($i) => optional($i->category)->name ?? 'ไม่ระบุด้าน') as $catName => $inds) {
+                foreach ($indsByStd->groupBy(fn ($i) => optional($i->category)->name ?? 'ไม่ระบุด้าน') as $catName => $inds) {
                     // ===== หัวด้าน =====
                     $sheet->mergeCells("A{$row}:I{$row}")
                         ->setCellValue("A{$row}", "ด้าน: {$catName}");
@@ -961,13 +1027,13 @@ class SarReportController extends Controller
                         $row++;
 
                         // ===== หัวตารางเกณฑ์มาตรฐาน =====
-                        $sheet->mergeCells("A{$row}:A" . ($row + 1))->setCellValue("A{$row}", 'ข้อ');
-                        $sheet->mergeCells("B{$row}:B" . ($row + 1))->setCellValue("B{$row}", 'เกณฑ์มาตรฐาน');
+                        $sheet->mergeCells("A{$row}:A".($row + 1))->setCellValue("A{$row}", 'ข้อ');
+                        $sheet->mergeCells("B{$row}:B".($row + 1))->setCellValue("B{$row}", 'เกณฑ์มาตรฐาน');
                         $sheet->mergeCells("C{$row}:D{$row}")->setCellValue("C{$row}", 'ผลการดำเนินงาน');
-                        $sheet->setCellValue("C" . ($row + 1), 'มี');
-                        $sheet->setCellValue("D" . ($row + 1), 'ไม่มี');
-                        $sheet->mergeCells("E{$row}:H" . ($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
-                        $sheet->mergeCells("I{$row}:I" . ($row + 1))->setCellValue("I{$row}", 'เอกสาร/หลักฐาน');
+                        $sheet->setCellValue('C'.($row + 1), 'มี');
+                        $sheet->setCellValue('D'.($row + 1), 'ไม่มี');
+                        $sheet->mergeCells("E{$row}:H".($row + 1))->setCellValue("E{$row}", 'รายงานผลการดำเนินงาน');
+                        $sheet->mergeCells("I{$row}:I".($row + 1))->setCellValue("I{$row}", 'เอกสาร/หลักฐาน');
                         $row += 2;
 
                         // ===== loop criterias =====
@@ -975,7 +1041,7 @@ class SarReportController extends Controller
                         foreach ($ind->criterias as $cri) {
                             $sheet->setCellValue("A{$row}", $ci++);
                             $sheet->setCellValue("B{$row}", $cri->name ?? '');
-                            $has = (bool)($cri->status ?? false);
+                            $has = (bool) ($cri->status ?? false);
                             $sheet->setCellValue("C{$row}", $has ? '✓' : '');
                             $sheet->setCellValue("D{$row}", $has ? '' : '✓');
                             $detailHtml = $getCriteriaReportHtml($cri);
@@ -999,6 +1065,7 @@ class SarReportController extends Controller
                                         $sheet->getStyle("E{$reportRow}")->getFont()->setName('Courier New');
                                         $wroteReport = true;
                                         $reportRow++;
+
                                         continue;
                                     }
                                     if (($block['type'] ?? '') === 'table') {
@@ -1015,6 +1082,7 @@ class SarReportController extends Controller
                                             $wroteReport = true;
                                             $reportRow++;
                                         }
+
                                         continue;
                                     }
                                     if (($block['type'] ?? '') === 'image') {
@@ -1030,7 +1098,7 @@ class SarReportController extends Controller
                                             $path = $src;
                                         }
                                         if ($path) {
-                                            $drawing = new Drawing();
+                                            $drawing = new Drawing;
                                             $drawing->setPath($path);
                                             $drawing->setHeight(90);
                                             $drawing->setCoordinates("E{$reportRow}");
@@ -1039,6 +1107,7 @@ class SarReportController extends Controller
                                             $wroteReport = true;
                                             $reportRow++;
                                         }
+
                                         continue;
                                     }
                                 }
@@ -1046,7 +1115,7 @@ class SarReportController extends Controller
 
                             $evList = $cri->evidences->pluck('name')->implode(', ');
                             $sheet->setCellValue("I{$row}", $evList ?: '-');
-                            if (!$wroteReport) {
+                            if (! $wroteReport) {
                                 $sheet->mergeCells("E{$row}:H{$row}");
                                 $sheet->setCellValue("E{$row}", '-');
                                 $sheet->getStyle("E{$row}")->getAlignment()->setWrapText(true);
@@ -1062,7 +1131,7 @@ class SarReportController extends Controller
                         $row++;
 
                         $lines = [];
-                        if (!empty($ind->comment)) {
+                        if (! empty($ind->comment)) {
                             $plain = preg_replace('/<\/(p|div|li|br)>/i', "\n", $ind->comment);
                             $plain = strip_tags($plain);
                             $plain = html_entity_decode($plain, ENT_QUOTES, 'UTF-8');
@@ -1100,18 +1169,17 @@ class SarReportController extends Controller
                             }
                         }
 
-
                         // ===== ใส่ border + alignment =====
                         $sheet->getStyle("A1:I{$row}")->applyFromArray([
                             'borders' => [
                                 'allBorders' => [
-                                    'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+                                    'borderStyle' => Border::BORDER_THIN,
                                 ],
                             ],
                             'alignment' => [
-                                'horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER,
-                                'vertical'   => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER,
-                                'wrapText'   => true,
+                                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                                'vertical' => Alignment::VERTICAL_CENTER,
+                                'wrapText' => true,
                             ],
                         ]);
 
@@ -1133,6 +1201,7 @@ class SarReportController extends Controller
 
             $writer = new Xlsx($spreadsheet);
             $filename = "sar-report-{$report->year}.xlsx";
+
             return response()->streamDownload(function () use ($writer) {
                 if (ob_get_length()) {
                     @ob_end_clean();
@@ -1145,9 +1214,8 @@ class SarReportController extends Controller
             ]);
         }
 
-
         if ($type === 'docx') {
-            $phpWord = new PhpWord();
+            $phpWord = new PhpWord;
             $section = $phpWord->addSection();
 
             // ===== ส่วนที่ 1 =====
@@ -1163,8 +1231,8 @@ class SarReportController extends Controller
 
             $indicators = Indicator::with([
                 'category.standard',
-                'criterias' => fn($q) => $q->orderBy('sequence'),
-                'criterias.evidences'
+                'criterias' => fn ($q) => $q->orderBy('sequence'),
+                'criterias.evidences',
             ])
                 ->where('year', $report->year)
                 ->join('categories', 'categories.id', '=', 'indicators.categorie_id')
@@ -1174,12 +1242,12 @@ class SarReportController extends Controller
                 ->orderBy('indicators.id')
                 ->select('indicators.*')
                 ->get()
-                ->groupBy(fn($ind) => optional(optional($ind->category)->standard)->name ?? 'ไม่ระบุมาตรฐาน');
+                ->groupBy(fn ($ind) => optional(optional($ind->category)->standard)->name ?? 'ไม่ระบุมาตรฐาน');
 
             foreach ($indicators as $stdName => $indsByStd) {
                 $section->addTitle($this->sanitizeWordText("มาตรฐาน: {$stdName}"), 3);
 
-                foreach ($indsByStd->groupBy(fn($i) => optional($i->category)->name ?? 'ไม่ระบุด้าน') as $catName => $inds) {
+                foreach ($indsByStd->groupBy(fn ($i) => optional($i->category)->name ?? 'ไม่ระบุด้าน') as $catName => $inds) {
                     $section->addTitle($this->sanitizeWordText("ด้าน: {$catName}"), 4);
 
                     foreach ($inds as $ind) {
@@ -1196,7 +1264,7 @@ class SarReportController extends Controller
 
                         foreach ($ind->criterias as $i => $cri) {
                             $table->addRow();
-                            $table->addCell(500)->addText((string)($i + 1));
+                            $table->addCell(500)->addText((string) ($i + 1));
                             $table->addCell(3000)->addText($this->sanitizeWordText($cri->name));
                             $table->addCell(1500)->addText($cri->status ? '✓' : '-');
 
@@ -1209,7 +1277,7 @@ class SarReportController extends Controller
 
                         // ===== ตารางเกณฑ์การให้คะแนน =====
                         $lines = [];
-                        if (!empty($ind->comment)) {
+                        if (! empty($ind->comment)) {
                             $plain = preg_replace('/<\/(p|div|li|br)>/i', "\n", $ind->comment);
                             $plain = strip_tags($plain);
                             $plain = html_entity_decode($plain, ENT_QUOTES, 'UTF-8');
@@ -1224,7 +1292,7 @@ class SarReportController extends Controller
                         $scoreTable->addCell(1500)->addText('คะแนน', ['bold' => true]);
                         $scoreTable->addCell(2000)->addText('การประเมินตนเอง', ['bold' => true]);
 
-                        if (!empty($lines)) {
+                        if (! empty($lines)) {
                             foreach ($lines as $line) {
                                 $scoreFromLine = null;
                                 if (preg_match(
@@ -1234,7 +1302,7 @@ class SarReportController extends Controller
                                 )) {
                                     $scoreFromLine = (float) $mm[1];
                                 }
-                                $match = $score !== null && $scoreFromLine !== null && abs($scoreFromLine - (float)$score) < 0.001;
+                                $match = $score !== null && $scoreFromLine !== null && abs($scoreFromLine - (float) $score) < 0.001;
 
                                 $scoreTable->addRow();
                                 $scoreTable->addCell(6000)->addText($this->sanitizeWordText($line));
@@ -1269,7 +1337,6 @@ class SarReportController extends Controller
             ]);
         }
 
-
         return back()->with('error', 'ไม่รองรับรูปแบบไฟล์นี้');
     }
 
@@ -1282,32 +1349,32 @@ class SarReportController extends Controller
             $source = public_path('fonts');
             $destination = storage_path('fonts');
 
-            if (!is_dir($source)) {
+            if (! is_dir($source)) {
                 return; // nothing to copy; view may still embed fonts via @font-face if paths exist
             }
 
-            if (!is_dir($destination)) {
+            if (! is_dir($destination)) {
                 @mkdir($destination, 0755, true);
             }
 
             // Copy missing TTFs
-            foreach (glob($source . DIRECTORY_SEPARATOR . '*.ttf') as $file) {
-                $target = $destination . DIRECTORY_SEPARATOR . basename($file);
-                if (!file_exists($target)) {
+            foreach (glob($source.DIRECTORY_SEPARATOR.'*.ttf') as $file) {
+                $target = $destination.DIRECTORY_SEPARATOR.basename($file);
+                if (! file_exists($target)) {
                     @copy($file, $target);
                 }
             }
 
             // Fallback: if bundled Thai fonts look suspiciously small, copy Windows fonts as a substitute
-            $sarabunReg = $destination . DIRECTORY_SEPARATOR . 'Sarabun-Regular.ttf';
-            $sarabunBold = $destination . DIRECTORY_SEPARATOR . 'Sarabun-Bold.ttf';
+            $sarabunReg = $destination.DIRECTORY_SEPARATOR.'Sarabun-Regular.ttf';
+            $sarabunBold = $destination.DIRECTORY_SEPARATOR.'Sarabun-Bold.ttf';
             $tooSmall = function ($p) {
-                return !file_exists($p) || filesize($p) < 200000;
+                return ! file_exists($p) || filesize($p) < 200000;
             };
             if ($tooSmall($sarabunReg) || $tooSmall($sarabunBold)) {
-                $winFonts = getenv('WINDIR') ? getenv('WINDIR') . DIRECTORY_SEPARATOR . 'Fonts' : 'C:\\Windows\\Fonts';
-                $tahomaReg = $winFonts . DIRECTORY_SEPARATOR . 'tahoma.ttf';
-                $tahomaBold = $winFonts . DIRECTORY_SEPARATOR . 'tahomabd.ttf';
+                $winFonts = getenv('WINDIR') ? getenv('WINDIR').DIRECTORY_SEPARATOR.'Fonts' : 'C:\\Windows\\Fonts';
+                $tahomaReg = $winFonts.DIRECTORY_SEPARATOR.'tahoma.ttf';
+                $tahomaBold = $winFonts.DIRECTORY_SEPARATOR.'tahomabd.ttf';
                 if (@is_file($tahomaReg) && @is_file($tahomaBold)) {
                     @copy($tahomaReg, $sarabunReg);
                     @copy($tahomaBold, $sarabunBold);

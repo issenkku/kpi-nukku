@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Indicator;
-use Exception;
+use App\Notifications\IndicatorAssignedNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -48,10 +48,10 @@ class NotifycationController extends Controller
                 if ($assignment->collectorUser) {
                     try {
                         $assignment->collectorUser->notify(
-                            new \App\Notifications\IndicatorAssignedNotification($indicator, $missingRequirements)
+                            new IndicatorAssignedNotification($indicator, $missingRequirements)
                         );
-                    } catch (Exception $e) {
-                        Log::error('Failed to notify user ID: ' . $assignment->collectorUser->id, [
+                    } catch (\Throwable $e) {
+                        Log::error('Failed to notify user ID: '.$assignment->collectorUser->id, [
                             'error' => $e->getMessage(),
                         ]);
                     }
@@ -65,19 +65,23 @@ class NotifycationController extends Controller
                     'indicator_id' => (int) $id,
                 ]);
             }
+
             return back()->with('success', 'Notifications dispatched to assignees.');
-        } catch (Exception $e) {
-            Log::error('Notify assignees failed for Indicator ID: ' . $id, [
+        } catch (ModelNotFoundException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            Log::error('Notify assignees failed for Indicator ID: '.$id, [
                 'error' => $e->getMessage(),
             ]);
 
             if ($request->expectsJson()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => $e->getMessage(),
+                    'message' => 'Unable to send notifications.',
                 ], 500);
             }
-            return back()->with('error', 'Failed to notify assignees: ' . $e->getMessage());
+
+            return back()->with('error', 'Unable to send notifications.');
         }
     }
 }

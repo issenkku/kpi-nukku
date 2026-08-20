@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Fix project name so named volumes (e.g. dbdata) stay consistent
 # across `docker compose up -d` runs and container recreation.
 name: kpi-nukku
@@ -16,22 +14,26 @@ services:
       - ./:/var/www/html
       - vendor:/var/www/html/vendor
     environment:
-      APP_ENV: ${APP_ENV:-local}
-      APP_DEBUG: ${APP_DEBUG:-true}
-      APP_URL: ${APP_URL:-http://localhost:8080}
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:?Set APP_URL in .env}
       # Override DB to talk to containerized Postgres
       DB_CONNECTION: pgsql
       DB_HOST: db
       DB_PORT: ${DB_PORT:-5432}
       DB_DATABASE: ${DB_DATABASE:-kpi_nukku}
       DB_USERNAME: ${DB_USERNAME:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-password}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:stable-alpine
     container_name: kpi-nukku-nginx
     restart: unless-stopped
     ports:
@@ -50,9 +52,7 @@ services:
     environment:
       POSTGRES_DB: ${DB_DATABASE:-kpi_nukku}
       POSTGRES_USER: ${DB_USERNAME:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     volumes:
       - dbdata:/var/lib/postgresql/data
     healthcheck:
@@ -65,8 +65,16 @@ services:
     image: redis:7-alpine
     container_name: kpi-nukku-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # One-off service to install PHP deps, migrate/seed, and cache configs
   setup:
@@ -80,33 +88,98 @@ services:
       - ./:/var/www/html
       - vendor:/var/www/html/vendor
     environment:
-      APP_ENV: ${APP_ENV:-local}
-      APP_DEBUG: ${APP_DEBUG:-true}
-      APP_URL: ${APP_URL:-http://localhost:8080}
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:?Set APP_URL in .env}
       DB_CONNECTION: pgsql
       DB_HOST: db
       DB_PORT: ${DB_PORT:-5432}
       DB_DATABASE: ${DB_DATABASE:-kpi_nukku}
       DB_USERNAME: ${DB_USERNAME:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-password}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: ["sh","-lc","chmod +x docker/setup.sh || true; sed -i 's/\\r$//' docker/setup.sh 2>/dev/null || true; ./docker/setup.sh"]
     restart: "no"
 
+  queue:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: kpi-nukku-queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+      - vendor:/var/www/html/vendor
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:?Set APP_URL in .env}
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: ${DB_PORT:-5432}
+      DB_DATABASE: ${DB_DATABASE:-kpi_nukku}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3", "--timeout=120"]
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: kpi-nukku-scheduler
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+      - vendor:/var/www/html/vendor
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:?Set APP_URL in .env}
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: ${DB_PORT:-5432}
+      DB_DATABASE: ${DB_DATABASE:-kpi_nukku}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["php", "artisan", "schedule:work"]
+
   # One-off service to build frontend assets with Vite
   node:
-    image: node:20-alpine
+    profiles: ["build"]
+    image: node:22-alpine
     container_name: kpi-nukku-node
     working_dir: /var/www/html
     volumes:
       - ./:/var/www/html
+      - node_modules:/var/www/html/node_modules
     command: sh -lc "npm ci && npm run build"
     depends_on:
       - app
 
 volumes:
   dbdata:
+  redisdata:
   vendor:
+  node_modules:

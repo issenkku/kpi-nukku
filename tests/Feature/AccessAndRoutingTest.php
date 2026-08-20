@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 class AccessAndRoutingTest extends TestCase
@@ -19,18 +20,23 @@ class AccessAndRoutingTest extends TestCase
     }
 
     #[Test]
-    public function guest_cannot_access_home(): void
+    public function guest_cannot_access_dashboard(): void
     {
-        $this->get('/home')->assertStatus(302);
+        $this->get('/dashboard')->assertRedirect(route('login'));
     }
 
     #[Test]
-    public function logged_in_can_access_home(): void
+    public function authorized_user_can_access_dashboard(): void
     {
         $user = User::factory()->create();
+        $permission = Permission::firstOrCreate([
+            'name' => 'view-dashboard',
+            'guard_name' => 'web',
+        ]);
+        $user->givePermissionTo($permission);
+
         $this->actingAs($user)
-            ->get('/home')
+            ->get('/dashboard')
             ->assertOk();
     }
 }
-

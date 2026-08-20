@@ -13,7 +13,6 @@ class ExportGuestTest extends TestCase
     #[Test]
     public function guest_cannot_export_indicators(): void
     {
-        $this->get('/export/indicators')->assertStatus(302);
+        $this->get('/dashboard/export')->assertRedirect(route('login'));
     }
 }
-

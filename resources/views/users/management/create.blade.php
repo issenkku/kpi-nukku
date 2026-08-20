@@ -109,7 +109,7 @@
                     <div class="form-row">
                         <div class="form-group ">
                             <x-input name="password" type="password" label="รหัสผ่าน"
-                                placeholder="กรุณากรอกรหัสผ่าน (อย่างน้อย 6 ตัวอักษร)" :required="true" />
+                                placeholder="กรุณากรอกรหัสผ่าน (อย่างน้อย 12 ตัวอักษร)" :required="true" />
                             @error('password')
                                 <div class="error-message">{{ $message }}</div>
                             @enderror
